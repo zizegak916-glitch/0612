@@ -1,0 +1,209 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		100000000000000000000101 /* IPBatchInspectorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000201 /* IPBatchInspectorApp.swift */; };
+		100000000000000000000102 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000202 /* ContentView.swift */; };
+		100000000000000000000103 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000203 /* Models.swift */; };
+		100000000000000000000104 /* IPRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000204 /* IPRules.swift */; };
+		100000000000000000000105 /* SubscriptionParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000205 /* SubscriptionParser.swift */; };
+		100000000000000000000106 /* NetworkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000206 /* NetworkService.swift */; };
+		100000000000000000000107 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000207 /* KeychainStore.swift */; };
+		100000000000000000000108 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000208 /* AppModel.swift */; };
+		100000000000000000000109 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 100000000000000000000209 /* Security.framework */; };
+		10000000000000000000010A /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10000000000000000000020A /* Network.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		100000000000000000000200 /* IPBatchInspector.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = IPBatchInspector.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000201 /* IPBatchInspectorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPBatchInspectorApp.swift; sourceTree = "<group>"; };
+		100000000000000000000202 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		100000000000000000000203 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		100000000000000000000204 /* IPRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPRules.swift; sourceTree = "<group>"; };
+		100000000000000000000205 /* SubscriptionParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionParser.swift; sourceTree = "<group>"; };
+		100000000000000000000206 /* NetworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkService.swift; sourceTree = "<group>"; };
+		100000000000000000000207 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		100000000000000000000208 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		10000000000000000000020B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		100000000000000000000209 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		10000000000000000000020A /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		100000000000000000000301 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000109 /* Security.framework in Frameworks */,
+				10000000000000000000010A /* Network.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		100000000000000000000401 = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000402 /* IPBatchInspector */,
+				100000000000000000000403 /* Frameworks */,
+				100000000000000000000404 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		100000000000000000000402 /* IPBatchInspector */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000201 /* IPBatchInspectorApp.swift */,
+				100000000000000000000202 /* ContentView.swift */,
+				100000000000000000000203 /* Models.swift */,
+				100000000000000000000204 /* IPRules.swift */,
+				100000000000000000000205 /* SubscriptionParser.swift */,
+				100000000000000000000206 /* NetworkService.swift */,
+				100000000000000000000207 /* KeychainStore.swift */,
+				100000000000000000000208 /* AppModel.swift */,
+				10000000000000000000020B /* Info.plist */,
+			);
+			path = IPBatchInspector;
+			sourceTree = "<group>";
+		};
+		100000000000000000000403 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000209 /* Security.framework */,
+				10000000000000000000020A /* Network.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		100000000000000000000404 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000200 /* IPBatchInspector.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		100000000000000000000501 /* IPBatchInspector */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100000000000000000000601 /* Build configuration list for PBXNativeTarget "IPBatchInspector" */;
+			buildPhases = (
+				100000000000000000000302 /* Sources */,
+				100000000000000000000301 /* Frameworks */,
+				100000000000000000000303 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = IPBatchInspector;
+			productName = IPBatchInspector;
+			productReference = 100000000000000000000200 /* IPBatchInspector.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		100000000000000000000500 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = { 100000000000000000000501 = { CreatedOnToolsVersion = 16.0; }; };
+			};
+			buildConfigurationList = 100000000000000000000600 /* Build configuration list for PBXProject "IPBatchInspector" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = 100000000000000000000401;
+			productRefGroup = 100000000000000000000404 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (100000000000000000000501 /* IPBatchInspector */);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		100000000000000000000303 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		100000000000000000000302 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000101 /* IPBatchInspectorApp.swift in Sources */,
+				100000000000000000000102 /* ContentView.swift in Sources */,
+				100000000000000000000103 /* Models.swift in Sources */,
+				100000000000000000000104 /* IPRules.swift in Sources */,
+				100000000000000000000105 /* SubscriptionParser.swift in Sources */,
+				100000000000000000000106 /* NetworkService.swift in Sources */,
+				100000000000000000000107 /* KeychainStore.swift in Sources */,
+				100000000000000000000108 /* AppModel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		100000000000000000000701 /* Debug project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0;}; name = Debug;};
+		100000000000000000000702 /* Release project */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 5.0;}; name = Release;};
+		100000000000000000000703 /* Debug target */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = IPBatchInspector/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 4.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fool.ipbatch.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		100000000000000000000704 /* Release target */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = IPBatchInspector/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 4.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fool.ipbatch.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		100000000000000000000600 /* Build configuration list for PBXProject "IPBatchInspector" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000701, 100000000000000000000702); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+		100000000000000000000601 /* Build configuration list for PBXNativeTarget "IPBatchInspector" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000703, 100000000000000000000704); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+/* End XCConfigurationList section */
+	};
+	rootObject = 100000000000000000000500 /* Project object */;
+}

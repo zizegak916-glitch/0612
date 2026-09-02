@@ -1,0 +1,18 @@
+[Unit]
+Description=IPBatchInspector evidence monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env ipbatch monitor --config %h/.config/ipbatch-inspector/monitor.json
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/ipbatch-inspector %h/.config/ipbatch-inspector
+
+[Install]
+WantedBy=default.target

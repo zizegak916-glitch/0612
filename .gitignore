@@ -1,0 +1,31 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.spec
+*.egg-info/
+.idea/
+.vscode/
+
+# Android toolchains, outputs, and signing material
+apps/android/.toolchain/
+apps/android/build/
+apps/android/*.jks
+apps/android/*.keystore
+apps/android/local.properties
+
+# Apple local state and build outputs
+apps/ios/DerivedData/
+apps/ios/*.xcworkspace/xcuserdata/
+apps/ios/*.xcodeproj/xcuserdata/
+*.xcuserstate
+
+# Local secrets and scan exports
+.env
+*.csv
+subscriptions.json
+monitor-results/

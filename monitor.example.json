@@ -1,0 +1,7 @@
+{
+  "mode": "exit",
+  "interval_seconds": 900,
+  "timeout": 12,
+  "history_limit": 10,
+  "output_directory": "monitor-results"
+}

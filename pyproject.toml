@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ipbatch-inspector"
+version = "4.0.0"
+description = "Cross-platform, evidence-first IP intelligence and subscription inspection without proxy-node connections"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "IPBatchInspector contributors" }]
+keywords = ["ip", "asn", "rdap", "subscription", "clash", "network", "security"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Environment :: Win32 (MS Windows)",
+  "Environment :: X11 Applications",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Internet",
+  "Topic :: System :: Networking",
+]
+
+[project.optional-dependencies]
+secure-store = ["keyring>=25"]
+package = ["build>=1.2", "pyinstaller>=6.0", "keyring>=25"]
+
+[project.scripts]
+ipbatch = "ipbatch_inspector.cli:main"
+ipbatch-gui = "ipbatch_inspector.desktop:main"
+
+[project.urls]
+Homepage = "https://github.com/zizegak916-glitch/0612"
+Issues = "https://github.com/zizegak916-glitch/0612/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

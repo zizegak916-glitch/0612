@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m compileall -q src tests scripts
+      - run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: src
+      - run: python scripts/ip_inspector.py formats
+
+  android:
+    name: Android native build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build and run Android smoke tests
+        working-directory: apps/android
+        run: ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: apps/android/build/IPBatchInspector-v4.0.0-android.apk
+
+  ios:
+    name: iOS simulator build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build unsigned simulator app
+        working-directory: apps/ios
+        run: xcodebuild -project IPBatchInspector.xcodeproj -scheme IPBatchInspector -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+
+  boundary:
+    name: Subscription network boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify resolver never receives node ports
+        run: python -m unittest tests.test_iptools.IpToolsTest.test_node_port_never_enters_resolver -v
+        env:
+          PYTHONPATH: src
+      - name: Reject proxy/VPN service APIs in native clients
+        run: |
+          if rg -n 'VpnService|BIND_VPN_SERVICE|NEPacketTunnelProvider|NEDNSProxyProvider|NWConnection' apps; then
+            echo 'Forbidden tunneling API found.' >&2
+            exit 1
+          fi

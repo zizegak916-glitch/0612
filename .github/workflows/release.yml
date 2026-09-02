@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-x86_64
+          - os: windows-latest
+            suffix: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Tk runtime
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk
+      - run: python -m pip install --upgrade pyinstaller keyring
+      - run: pyinstaller --clean --paths src --onefile --name ipbatch-cli scripts/ip_inspector.py
+      - run: pyinstaller --clean --paths src --onefile --windowed --name IPBatchInspector apps/desktop/launcher.py
+      - name: Stage Unix assets
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p release
+          mv dist/ipbatch-cli release/ipbatch-cli-${{ matrix.suffix }}
+          mv dist/IPBatchInspector release/IPBatchInspector-${{ matrix.suffix }}
+      - name: Stage Windows assets
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Move-Item dist/ipbatch-cli.exe release/ipbatch-cli-${{ matrix.suffix }}.exe
+          Move-Item dist/IPBatchInspector.exe release/IPBatchInspector-${{ matrix.suffix }}.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.suffix }}
+          path: release/*
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - working-directory: apps/android
+        run: ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: apps/android/build/IPBatchInspector-v4.0.0-android.apk
+
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - working-directory: apps/ios
+        run: |
+          xcodebuild -project IPBatchInspector.xcodeproj -scheme IPBatchInspector -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
+          ditto -c -k --sequesterRsrc --keepParent DerivedData/Build/Products/Release-iphonesimulator/IPBatchInspector.app IPBatchInspector-ios-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator
+          path: apps/ios/IPBatchInspector-ios-simulator.zip
+
+  publish:
+    needs: [desktop, android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: SHA-256 manifest
+        working-directory: release
+        run: sha256sum * > SHA256SUMS.txt
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" --generate-notes --title "IPBatchInspector $GITHUB_REF_NAME"
