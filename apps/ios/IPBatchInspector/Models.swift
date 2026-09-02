@@ -51,6 +51,7 @@ struct SubscriptionResult: Codable {
     let nodes: [NodeEndpoint]
     let publicIPs: [String]
     let localOrReserved: [String]
+    let intelligence: [IPResult]
     let warnings: [String]
     let rawContentPersisted: Bool
     let networkBoundary: String

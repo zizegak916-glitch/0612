@@ -113,7 +113,8 @@ enum NetworkService {
             } catch { warnings.append("DNS failed for \(node.host): \(error.localizedDescription)") }
         }
         let counts = Dictionary(grouping: nodes, by: \.protocolName).mapValues(\.count)
-        return SubscriptionResult(nodeCount: nodes.count, protocolCounts: counts, nodes: nodes, publicIPs: publicIPs, localOrReserved: local, warnings: warnings, rawContentPersisted: false, networkBoundary: "Downloaded subscription/provider text and used OS DNS only; no node port was connected.")
+        let intelligence = await scanIPs(publicIPs.joined(separator: "\n"))
+        return SubscriptionResult(nodeCount: nodes.count, protocolCounts: counts, nodes: nodes, publicIPs: publicIPs, localOrReserved: local, intelligence: intelligence, warnings: warnings, rawContentPersisted: false, networkBoundary: "Downloaded subscription/provider text, used OS DNS and queried public-IP intelligence only; no node port was connected.")
     }
 
     static func detectExit() async -> [[String: String]] {
@@ -141,49 +142,79 @@ enum NetworkService {
         let tokens = values.components(separatedBy: CharacterSet(charactersIn: " ,;\n\t")).filter { !$0.isEmpty }
         var unique: [String] = []
         for token in tokens where IPRules.isPublic(token) && !unique.contains(token) && unique.count < 500 { unique.append(token) }
-        var output: [IPResult] = []
-        for ip in unique {
-            var result = IPResult(ip: ip, status: "failed")
-            let sources = [
-                ("ipapi.is", "https://api.ipapi.is/?q=\(ip.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ip)"),
-                ("GeoJS", "https://get.geojs.io/v1/ip/geo/\(ip.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ip).json"),
-                ("RDAP", "https://rdap.org/ip/\(ip.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ip)")
-            ]
-            for (source, address) in sources {
-                let started = Date()
-                do {
-                    let object = try await fetchObject(address)
-                    var fields: [String: String] = [:]
-                    if source == "ipapi.is" {
-                        let location = object["location"] as? [String: Any] ?? object
-                        let asn = object["asn"] as? [String: Any] ?? [:]
-                        fields["country"] = string(location["country"])
-                        fields["country_code"] = string(location["country_code"])
-                        fields["asn"] = string(asn["asn"])
-                        fields["organization"] = string(asn["org"] ?? asn["name"])
-                    } else if source == "GeoJS" {
-                        fields["country"] = string(object["country"])
-                        fields["country_code"] = string(object["country_code"])
-                        fields["asn"] = string(object["asn"])
-                        fields["organization"] = string(object["organization_name"] ?? object["organization"])
-                    } else {
-                        fields["range"] = "\(string(object["startAddress"])) - \(string(object["endAddress"]))"
-                        fields["registration_name"] = string(object["name"] ?? object["handle"])
-                    }
-                    fields = fields.filter { !$0.value.isEmpty }
-                    result.evidence.append(SourceEvidence(source: source, ok: true, elapsedMilliseconds: Int(Date().timeIntervalSince(started) * 1000), checkedAt: iso.string(from: Date()), fields: fields, error: nil))
-                    if result.country.isEmpty { result.country = fields["country"] ?? "" }
-                    if result.countryCode.isEmpty { result.countryCode = fields["country_code"] ?? "" }
-                    if result.asn.isEmpty { result.asn = fields["asn"] ?? "" }
-                    if result.organization.isEmpty { result.organization = fields["organization"] ?? "" }
-                    result.status = "ok"
-                } catch {
-                    result.evidence.append(SourceEvidence(source: source, ok: false, elapsedMilliseconds: Int(Date().timeIntervalSince(started) * 1000), checkedAt: iso.string(from: Date()), fields: [:], error: error.localizedDescription))
+        var indexed: [(Int, IPResult)] = []
+        for start in stride(from: 0, to: unique.count, by: 4) {
+            let end = min(start + 4, unique.count)
+            await withTaskGroup(of: (Int, IPResult).self) { group in
+                for index in start..<end {
+                    group.addTask { (index, await scanOne(unique[index])) }
                 }
+                for await item in group { indexed.append(item) }
             }
-            output.append(result)
         }
-        return output
+        return indexed.sorted { $0.0 < $1.0 }.map { $0.1 }
+    }
+
+    private static func scanOne(_ ip: String) async -> IPResult {
+        var result = IPResult(ip: ip, status: "failed")
+        let queryIP = ip.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ip
+        let pathIP = ip.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ip
+        let sources = [
+            ("ipapi.is", "https://api.ipapi.is/?q=\(queryIP)"),
+            ("proxycheck.io", "https://proxycheck.io/v2/\(pathIP)?vpn=1&asn=1&risk=1"),
+            ("GeoJS", "https://get.geojs.io/v1/ip/geo/\(pathIP).json"),
+            ("RDAP", "https://rdap.org/ip/\(pathIP)"),
+            ("RIPEstat", "https://stat.ripe.net/data/routing-status/data.json?resource=\(queryIP)")
+        ]
+        for (source, address) in sources {
+            let started = Date()
+            do {
+                let object = try await fetchObject(address)
+                var fields: [String: String] = [:]
+                if source == "ipapi.is" {
+                    let location = object["location"] as? [String: Any] ?? object
+                    let asn = object["asn"] as? [String: Any] ?? [:]
+                    fields["country"] = string(location["country"])
+                    fields["country_code"] = string(location["country_code"])
+                    fields["asn"] = string(asn["asn"])
+                    fields["organization"] = string(asn["org"] ?? asn["name"])
+                    for key in ["is_proxy", "is_vpn", "is_tor", "is_datacenter", "is_abuser"] { fields[key] = string(object[key]) }
+                } else if source == "proxycheck.io" {
+                    let item = object[ip] as? [String: Any] ?? [:]
+                    fields["country"] = string(item["country"])
+                    fields["country_code"] = string(item["isocode"])
+                    fields["asn"] = string(item["asn"])
+                    fields["organization"] = string(item["organisation"] ?? item["provider"])
+                    fields["proxy"] = string(item["proxy"])
+                    fields["type"] = string(item["type"])
+                    fields["risk"] = string(item["risk"])
+                    fields["last_seen"] = string(item["last_seen"] ?? item["last seen"])
+                } else if source == "GeoJS" {
+                    fields["country"] = string(object["country"])
+                    fields["country_code"] = string(object["country_code"])
+                    fields["asn"] = string(object["asn"])
+                    fields["organization"] = string(object["organization_name"] ?? object["organization"])
+                } else if source == "RDAP" {
+                    fields["range"] = "\(string(object["startAddress"])) - \(string(object["endAddress"]))"
+                    fields["registration_name"] = string(object["name"] ?? object["handle"])
+                    fields["registration_country"] = string(object["country"])
+                } else if let data = object["data"] as? [String: Any], let last = data["last_seen"] as? [String: Any] {
+                    fields["prefix"] = string(last["prefix"])
+                    fields["origin_asn"] = string(last["origin"])
+                    fields["last_seen"] = string(last["time"])
+                }
+                fields = fields.filter { !$0.value.isEmpty }
+                result.evidence.append(SourceEvidence(source: source, ok: true, elapsedMilliseconds: Int(Date().timeIntervalSince(started) * 1000), checkedAt: iso.string(from: Date()), fields: fields, error: nil))
+                if result.country.isEmpty { result.country = fields["country"] ?? "" }
+                if result.countryCode.isEmpty { result.countryCode = fields["country_code"] ?? "" }
+                if result.asn.isEmpty { result.asn = fields["asn"] ?? fields["origin_asn"] ?? "" }
+                if result.organization.isEmpty { result.organization = fields["organization"] ?? "" }
+                result.status = "ok"
+            } catch {
+                result.evidence.append(SourceEvidence(source: source, ok: false, elapsedMilliseconds: Int(Date().timeIntervalSince(started) * 1000), checkedAt: iso.string(from: Date()), fields: [:], error: error.localizedDescription))
+            }
+        }
+        return result
     }
 
     static func testAIEntrances() async -> [EntranceResult] {
