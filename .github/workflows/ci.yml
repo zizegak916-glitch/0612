@@ -49,8 +49,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y python3-tk
       - run: python -m pip install --upgrade pyinstaller keyring
       - run: python -c "import tkinter; print('Tk OK')"
-      - run: pyinstaller --clean --paths src --onefile --name ipbatch-cli scripts/ip_inspector.py
-      - run: pyinstaller --clean --paths src --onefile --windowed --name IPBatchInspector apps/desktop/launcher.py
+      - run: python -m PyInstaller --clean --paths src --onefile --name ipbatch-cli scripts/ip_inspector.py
+      - run: python -m PyInstaller --clean --paths src --onefile --windowed --name IPBatchInspector apps/desktop/launcher.py
       - name: Stage Unix assets
         if: runner.os != 'Windows'
         run: |
@@ -84,7 +84,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
-          path: apps/android/build/IPBatchInspector-v4.0.0-android.apk
+          path: apps/android/build/IPBatchInspector-v4.0.0-android-debug.apk
 
   ios:
     name: iOS simulator build
@@ -117,5 +117,12 @@ jobs:
         run: |
           if rg -n 'VpnService|BIND_VPN_SERVICE|NEPacketTunnelProvider|NEDNSProxyProvider|NWConnection' apps; then
             echo 'Forbidden tunneling API found.' >&2
+            exit 1
+          fi
+      - name: Validate userscript syntax and no node-connection primitives
+        run: |
+          node --check userscript/IPBatchInspector.user.js
+          if rg -n 'WebSocket|RTCPeerConnection|ProxyService' userscript/IPBatchInspector.user.js; then
+            echo 'Forbidden node-connection primitive found in userscript.' >&2
             exit 1
           fi

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=IPBatchInspector
+Comment=Batch IP intelligence and parse-only subscription inspection
+Exec=/usr/bin/ipbatch-gui
+Icon=network-workgroup
+Terminal=false
+Categories=Network;Utility;

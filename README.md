@@ -1,6 +1,6 @@
 # IPBatchInspector 4
 
-IPBatchInspector 是一套证据优先、跨平台的 IP 批量情报与订阅检查工具。一个仓库同时提供 Android、iOS、Windows、Linux、终端 CLI 和 Bash/PowerShell 脚本。
+IPBatchInspector 是一套证据优先、跨平台的 IP 批量情报与订阅检查工具。一个仓库同时提供 Android、iOS、Windows、Linux、终端 CLI、Bash/PowerShell 脚本和 Tampermonkey/油猴版。
 
 > 最重要的安全边界：订阅节点只解析、做系统 DNS 解析并查询节点 IP 情报。项目不会连接节点端口，不做 SS/SSR/VMess/VLESS/Trojan/Hysteria/TUIC 握手，不建立 VPN，不修改系统路由，也不把“地区支持”冒充为“节点解锁实测”。
 
@@ -14,6 +14,23 @@ IPBatchInspector 是一套证据优先、跨平台的 IP 批量情报与订阅�
 | Linux | `ipbatch-gui` | Python/Tk 桌面窗口；可由 CI 打包为可执行文件 |
 | Terminal | `ipbatch` | 跨平台 CLI，支持表格、JSON、CSV |
 | Script | `scripts/ipbatch.sh` / `scripts/ipbatch.ps1` | 无需先安装包，从源码直接运行 CLI |
+| Tampermonkey | `userscript/IPBatchInspector.user.js` | 当前出口、批量 IP、订阅只解析、五源情报和 AI 入口直测；不具备系统后台能力 |
+
+## 正式下载与安装
+
+进入 [GitHub Releases](https://github.com/zizegak916-glitch/0612/releases/latest) 下载，并用同一页面的 `SHA256SUMS.txt` 校验。文件名会明确区分正式签名、开发签名、未签名和模拟器产物。
+
+| 目标 | 下载文件 | 安装方式 | 签名事实 |
+| --- | --- | --- | --- |
+| Windows x64 | `Windows-x64-Setup.exe` | 双击，按安装向导完成；也有 portable EXE | 可直接安装；未配置 Authenticode，SmartScreen 可能提示未知发布者 |
+| Debian/Ubuntu x64 | `linux-x86_64.deb` | `sudo apt install ./IPBatchInspector-*.deb` | GitHub Actions 原生构建；DEB 当前未做发行版仓库签名 |
+| 通用 Linux x64 | `linux-x86_64.tar.gz` | 解压后运行 `ipbatch-gui` 或 `ipbatch-cli` | 免安装包 |
+| Android 6+ | `android-release.apk` 或 `android-debug.apk` | 允许浏览器/文件管理器安装未知应用后侧载 | `release` 仅在 GitHub Secrets 配置私有发布密钥时出现；`debug` 可安装但不是正式升级签名 |
+| iOS 模拟器 | `iOS-Simulator.zip` | 拖入 Xcode Simulator | 不是 iPhone IPA；真机必须由 Apple 证书和描述文件签名 |
+| Python/终端 | `.whl` | `python -m pip install ./ipbatch_inspector-*.whl` | 平台无关 Python 包 |
+| 油猴 | `.user.js` | [直接打开主分支脚本](https://raw.githubusercontent.com/zizegak916-glitch/0612/main/userscript/IPBatchInspector.user.js)，在 Tampermonkey 中审查权限并安装 | 源码即安装内容，可自动检查更新 |
+
+油猴版需要 `@connect *`，原因是订阅域名由用户输入，无法提前穷举；脚本不会自动扫描当前网页，只有打开面板并点击操作后才发请求。它支持常见 Clash/Stash/Sing-box/Surge/Loon 导入包装链接、通用 Base64、Clash YAML 及主流节点 URI；“支持”指提取节点主机与端口元数据，不表示实现协议握手。它默认拒绝字面私网/本机地址并通过 Cloudflare DoH 检查公共域名的 A/AAAA 记录；现代 Tampermonkey 还会手动处理重定向并逐跳审计，旧实现若无视手动跳转选项则会丢弃跨站最终响应。
 
 ## 快速开始
 
@@ -75,6 +92,7 @@ ipbatch monitor --config monitor.example.json [--once]
 
 - Linux：`scripts/install_service_linux.sh` 安装当前用户的 systemd 服务；无需 root，也不会取得额外网络权限。
 - Windows：`scripts/install_service_windows.ps1` 注册当前用户登录后启动的计划任务。
+- Linux DEB 同时安装 `ipbatch-monitor.service` 模板但不会擅自启用；先创建不含明文 URL 的配置，再由用户执行 `systemctl --user enable --now ipbatch-monitor`。
 - Android：继续使用通知可见的前台服务。
 - iOS：只申请系统允许的有限后台时间，不支持无限常驻。
 
@@ -92,8 +110,9 @@ AI 检测分两类：
 ## 系统级/后台边界
 
 - Android 使用正式前台服务，任务离开页面后可继续，并显示系统通知；它不是 root、系统 UID 或 `/system/priv-app`。
-- Windows/Linux 桌面端的任务在线程池中运行；关闭窗口即停止。可由用户自行配置系统服务，但项目默认不安装常驻服务。
+- Windows/Linux 桌面窗口关闭后，当前交互任务会停止；已由用户显式安装的 systemd 用户服务或 Windows 计划任务独立运行。安装包不会在未告知的情况下自动启用后台监控。
 - iOS 不允许普通第三方应用无限后台运行。应用在前台完成检测；系统只可能为短时任务提供有限后台时间。项目不会声称绕过 iOS 限制。
+- 油猴脚本依赖浏览器标签页和扩展生命周期，不能替代系统服务；需要可靠后台监控时使用 Android 前台服务或 Windows/Linux 原生监控入口。
 - 所有平台都使用当前进程的系统默认路由。若设备 VPN/系统代理包含本应用，检测到的是该路由出口；项目自身不提供“绕墙”或代理连接能力。
 
 ## 构建
@@ -102,7 +121,7 @@ AI 检测分两类：
 - Windows/Linux GUI：见 [`docs/BUILDING.md`](docs/BUILDING.md)
 - Android：`cd apps/android && ./build.sh`
 - iOS：用 Xcode 打开 `apps/ios/IPBatchInspector.xcodeproj`，选择模拟器或签名设备构建。
-- GitHub Actions：每次提交执行 Python、Android、Windows 和 iOS 静态/构建检查；标签 `v*` 触发多平台产物工作流。
+- GitHub Actions：每次提交执行 Python、Android、Windows、Linux、iOS 和油猴静态/构建检查；新增 `.github/releases/v*.json` 发布清单后自动创建对应标签和 GitHub Release。
 - 每次主分支 CI 同时提供 Android APK、Windows/Linux CLI 与桌面程序、iOS 模拟器包作为 Actions artifacts；iOS 真机安装仍需用户自己的 Apple 签名。
 
 更完整的架构、安全边界和平台差异见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`SECURITY.md`](SECURITY.md) 与 [`PRIVACY.md`](PRIVACY.md)。

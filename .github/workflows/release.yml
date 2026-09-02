@@ -2,82 +2,156 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths:
+      - ".github/releases/*.json"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      title: ${{ steps.release.outputs.title }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: release
+        name: Read release manifest
+        shell: bash
+        run: |
+          manifest="$(find .github/releases -maxdepth 1 -name 'v*.json' -print | sort -V | tail -1)"
+          test -n "$manifest"
+          echo "version=$(jq -r .version "$manifest")" >> "$GITHUB_OUTPUT"
+          echo "tag=$(jq -r .tag "$manifest")" >> "$GITHUB_OUTPUT"
+          echo "title=$(jq -r .title "$manifest")" >> "$GITHUB_OUTPUT"
+
   desktop:
+    needs: metadata
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            suffix: linux-x86_64
+            platform: linux
           - os: windows-latest
-            suffix: windows-x86_64
+            platform: windows
     runs-on: ${{ matrix.os }}
+    env:
+      IPBATCH_VERSION: ${{ needs.metadata.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install Tk runtime
+      - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y python3-tk
       - run: python -m pip install --upgrade pyinstaller keyring
-      - run: pyinstaller --clean --paths src --onefile --name ipbatch-cli scripts/ip_inspector.py
-      - run: pyinstaller --clean --paths src --onefile --windowed --name IPBatchInspector apps/desktop/launcher.py
-      - name: Stage Unix assets
-        if: runner.os != 'Windows'
-        run: |
-          mkdir -p release
-          mv dist/ipbatch-cli release/ipbatch-cli-${{ matrix.suffix }}
-          mv dist/IPBatchInspector release/IPBatchInspector-${{ matrix.suffix }}
-      - name: Stage Windows assets
+      - run: python -m PyInstaller --clean --paths src --onefile --name ipbatch-cli scripts/ip_inspector.py
+      - run: python -m PyInstaller --clean --paths src --onefile --windowed --name IPBatchInspector apps/desktop/launcher.py
+      - name: Build DEB and portable Linux archive
+        if: runner.os == 'Linux'
+        run: ./packaging/linux/build_packages.sh "$IPBATCH_VERSION"
+      - name: Build Windows Setup installer
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          choco install innosetup -y --no-progress
           New-Item -ItemType Directory -Force release | Out-Null
-          Move-Item dist/ipbatch-cli.exe release/ipbatch-cli-${{ matrix.suffix }}.exe
-          Move-Item dist/IPBatchInspector.exe release/IPBatchInspector-${{ matrix.suffix }}.exe
+          $compiler = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          & $compiler "/DMyAppVersion=$env:IPBATCH_VERSION" "packaging\windows\IPBatchInspector.iss"
+          Copy-Item dist\IPBatchInspector.exe "release\IPBatchInspector-$env:IPBATCH_VERSION-Windows-x64-portable.exe"
+          Copy-Item dist\ipbatch-cli.exe "release\ipbatch-cli-$env:IPBATCH_VERSION-Windows-x64.exe"
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.suffix }}
+          name: release-${{ matrix.platform }}
+          path: release/*
+
+  python-package:
+    needs: metadata
+    runs-on: ubuntu-latest
+    env:
+      IPBATCH_VERSION: ${{ needs.metadata.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+      - name: Stage terminal packages and scripts
+        run: |
+          mkdir -p release script-bundle
+          cp dist/*.whl dist/*.tar.gz release/
+          cp -R scripts src pyproject.toml README.md LICENSE script-bundle/
+          (cd script-bundle && zip -qr "../release/IPBatchInspector-$IPBATCH_VERSION-terminal-scripts.zip" .)
+          cp userscript/IPBatchInspector.user.js "release/IPBatchInspector-$IPBATCH_VERSION.user.js"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-python-userscript
           path: release/*
 
   android:
+    needs: metadata
     runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      IPBATCH_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      IPBATCH_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      IPBATCH_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - working-directory: apps/android
+      - name: Restore optional protected Android signing key
+        shell: bash
+        run: |
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ipbatch-release.jks"
+            echo "IPBATCH_KEYSTORE=$RUNNER_TEMP/ipbatch-release.jks" >> "$GITHUB_ENV"
+          fi
+      - name: Build Android APKs
+        working-directory: apps/android
         run: ./build.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: android
-          path: apps/android/build/IPBatchInspector-v4.0.0-android.apk
+          name: release-android
+          path: |
+            apps/android/build/IPBatchInspector-v4.0.0-android-release.apk
+            apps/android/build/IPBatchInspector-v4.0.0-android-debug.apk
+            apps/android/build/IPBatchInspector-v4.0.0-android-unsigned.apk
+          if-no-files-found: warn
 
   ios:
+    needs: metadata
     runs-on: macos-15
+    env:
+      IPBATCH_VERSION: ${{ needs.metadata.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - working-directory: apps/ios
         run: |
           xcodebuild -project IPBatchInspector.xcodeproj -scheme IPBatchInspector -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
-          ditto -c -k --sequesterRsrc --keepParent DerivedData/Build/Products/Release-iphonesimulator/IPBatchInspector.app IPBatchInspector-ios-simulator.zip
+          ditto -c -k --sequesterRsrc --keepParent DerivedData/Build/Products/Release-iphonesimulator/IPBatchInspector.app "IPBatchInspector-$IPBATCH_VERSION-iOS-Simulator.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: ios-simulator
-          path: apps/ios/IPBatchInspector-ios-simulator.zip
+          name: release-ios-simulator
+          path: apps/ios/IPBatchInspector-*-iOS-Simulator.zip
 
   publish:
-    needs: [desktop, android, ios]
+    needs: [metadata, desktop, python-package, android, ios]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+      RELEASE_TITLE: ${{ needs.metadata.outputs.title }}
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: release
@@ -85,7 +159,17 @@ jobs:
       - name: SHA-256 manifest
         working-directory: release
         run: sha256sum * > SHA256SUMS.txt
-      - name: Publish GitHub release
+      - name: Publish GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" --generate-notes --title "IPBatchInspector $GITHUB_REF_NAME"
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TITLE" \
+              --notes-file docs/RELEASE_NOTES_v4.0.0.md
+          fi

@@ -6,6 +6,7 @@ __pycache__/
 venv/
 dist/
 build/
+release/
 *.spec
 *.egg-info/
 .idea/

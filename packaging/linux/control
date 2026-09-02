@@ -1,0 +1,12 @@
+Package: ipbatch-inspector
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: IPBatchInspector contributors
+Depends: libc6 (>= 2.31), libx11-6, libtk8.6
+Homepage: https://github.com/zizegak916-glitch/0612
+Description: Evidence-first IP and subscription inspector
+ Batch-check public IP intelligence, inspect proxy subscription documents without
+ connecting to node ports, and test public AI service entrances over the device's
+ current system route.

@@ -66,15 +66,36 @@ cp "$BUILD_DIR/base.apk" "$BUILD_DIR/unsigned.apk"
 (cd "$BUILD_DIR/dex" && zip -q -j "$BUILD_DIR/unsigned.apk" classes*.dex)
 "$ZIPALIGN" -p -f 4 "$BUILD_DIR/unsigned.apk" "$BUILD_DIR/aligned.apk"
 
-KEYSTORE="$BUILD_DIR/debug.keystore"
-if [ ! -f "$KEYSTORE" ]; then
-  keytool -genkeypair -keystore "$KEYSTORE" -storepass android -keypass android \
+UNSIGNED_APK="$BUILD_DIR/IPBatchInspector-v4.0.0-android-unsigned.apk"
+cp "$BUILD_DIR/aligned.apk" "$UNSIGNED_APK"
+
+if [ -n "${IPBATCH_KEYSTORE:-}" ]; then
+  : "${IPBATCH_KEY_ALIAS:?IPBATCH_KEY_ALIAS is required when IPBATCH_KEYSTORE is set}"
+  : "${IPBATCH_KEYSTORE_PASSWORD:?IPBATCH_KEYSTORE_PASSWORD is required when IPBATCH_KEYSTORE is set}"
+  : "${IPBATCH_KEY_PASSWORD:?IPBATCH_KEY_PASSWORD is required when IPBATCH_KEYSTORE is set}"
+  OUTPUT_APK="$BUILD_DIR/IPBatchInspector-v4.0.0-android-release.apk"
+  "$APKSIGNER" sign \
+    --ks "$IPBATCH_KEYSTORE" \
+    --ks-key-alias "$IPBATCH_KEY_ALIAS" \
+    --ks-pass "pass:$IPBATCH_KEYSTORE_PASSWORD" \
+    --key-pass "pass:$IPBATCH_KEY_PASSWORD" \
+    --out "$OUTPUT_APK" "$BUILD_DIR/aligned.apk"
+  SIGNING_KIND="release key supplied by caller"
+else
+  KEYSTORE="$BUILD_DIR/debug.keystore"
+  if [ ! -f "$KEYSTORE" ]; then
+    keytool -genkeypair -keystore "$KEYSTORE" -storepass android -keypass android \
     -alias androiddebugkey -dname "CN=IP Batch Inspector Debug,O=Local Build,C=CN" \
     -keyalg RSA -keysize 2048 -validity 10000 >/dev/null 2>&1
+  fi
+  OUTPUT_APK="$BUILD_DIR/IPBatchInspector-v4.0.0-android-debug.apk"
+  "$APKSIGNER" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
+    --out "$OUTPUT_APK" "$BUILD_DIR/aligned.apk"
+  SIGNING_KIND="development certificate (installable, not an official release signature)"
 fi
 
-"$APKSIGNER" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
-  --out "$BUILD_DIR/IPBatchInspector-v4.0.0-android.apk" "$BUILD_DIR/aligned.apk"
-"$APKSIGNER" verify --verbose "$BUILD_DIR/IPBatchInspector-v4.0.0-android.apk"
+"$APKSIGNER" verify --verbose "$OUTPUT_APK"
 
-echo "APK: $BUILD_DIR/IPBatchInspector-v4.0.0-android.apk"
+echo "Unsigned APK: $UNSIGNED_APK"
+echo "Signed APK: $OUTPUT_APK"
+echo "Signing: $SIGNING_KIND"

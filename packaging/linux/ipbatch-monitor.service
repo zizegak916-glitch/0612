@@ -1,0 +1,13 @@
+[Unit]
+Description=IPBatchInspector user monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ipbatch-cli monitor --config %h/.config/ipbatch-inspector/monitor.json
+Restart=on-failure
+RestartSec=20
+
+[Install]
+WantedBy=default.target
