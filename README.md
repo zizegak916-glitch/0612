@@ -103,6 +103,7 @@ AI 检测分两类：
 - Android：`cd apps/android && ./build.sh`
 - iOS：用 Xcode 打开 `apps/ios/IPBatchInspector.xcodeproj`，选择模拟器或签名设备构建。
 - GitHub Actions：每次提交执行 Python、Android、Windows 和 iOS 静态/构建检查；标签 `v*` 触发多平台产物工作流。
+- 每次主分支 CI 同时提供 Android APK、Windows/Linux CLI 与桌面程序、iOS 模拟器包作为 Actions artifacts；iOS 真机安装仍需用户自己的 Apple 签名。
 
 更完整的架构、安全边界和平台差异见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`SECURITY.md`](SECURITY.md) 与 [`PRIVACY.md`](PRIVACY.md)。
 
