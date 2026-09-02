@@ -34,6 +34,21 @@ public final class SubscriptionDownloader {
     }
 
     public Download download(String address, String userAgent, int timeoutMs, boolean allowPrivate) throws Exception {
+        String primary = address.trim();
+        try {
+            return downloadExact(primary, userAgent, timeoutMs, allowPrivate);
+        } catch (Exception first) {
+            String alternate = alternateFormatUrl(primary);
+            if (alternate == null) throw first;
+            try {
+                return downloadExact(alternate, userAgent, timeoutMs, allowPrivate);
+            } catch (Exception second) {
+                throw new Exception("原格式失败：" + first.getMessage() + "；fsl64/fslyaml 替代格式失败：" + second.getMessage());
+            }
+        }
+    }
+
+    private Download downloadExact(String address, String userAgent, int timeoutMs, boolean allowPrivate) throws Exception {
         URL current = new URL(address.trim());
         Download result = new Download();
         for (int hop = 0; hop <= 4; hop++) {
@@ -77,6 +92,15 @@ public final class SubscriptionDownloader {
             }
         }
         throw new Exception("订阅跳转次数超过 4 次");
+    }
+
+    public static String alternateFormatUrl(String address) {
+        if (address == null) return null;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?i)(^|/)(fsl64|fslyaml)(?=/|\\?|#|$)").matcher(address);
+        if (!matcher.find()) return null;
+        String replacement = "fsl64".equalsIgnoreCase(matcher.group(2)) ? "fslyaml" : "fsl64";
+        return address.substring(0, matcher.start(2)) + replacement + address.substring(matcher.end(2));
     }
 
     private void validate(URL url, boolean allowPrivate) throws Exception {

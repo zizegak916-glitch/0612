@@ -66,6 +66,15 @@ def subscription_url_from_input(value: str) -> str:
     raise ValueError("sn://subscription does not contain an explicit HTTP(S) URL")
 
 
+def alternate_fsl_url(value: str) -> str | None:
+    """Swap one fsl64/fslyaml path segment while preserving the raw query exactly."""
+    match = re.search(r"(?i)(^|/)(fsl64|fslyaml)(?=/|\?|#|$)", value)
+    if not match:
+        return None
+    replacement = "fslyaml" if match.group(2).lower() == "fsl64" else "fsl64"
+    return value[: match.start(2)] + replacement + value[match.end(2) :]
+
+
 class SubscriptionParser:
     """Pure text parser. This class has no socket or HTTP dependency."""
 

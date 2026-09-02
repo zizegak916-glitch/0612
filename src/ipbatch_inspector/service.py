@@ -7,7 +7,7 @@ from .ai import infer_ai_policy
 from .downloader import download_text
 from .models import SubscriptionReport
 from .providers import DEFAULT_SOURCES, scan_many
-from .subscriptions import MAX_PROVIDER_DOCUMENTS, SubscriptionParser, resolve_nodes, subscription_url_from_input
+from .subscriptions import MAX_PROVIDER_DOCUMENTS, SubscriptionParser, alternate_fsl_url, resolve_nodes, subscription_url_from_input
 
 
 def inspect_subscription(
@@ -21,7 +21,18 @@ def inspect_subscription(
 ) -> dict[str, Any]:
     """Download, parse, DNS-resolve and optionally enrich. It never uses node ports."""
     normalized_url = subscription_url_from_input(url)
-    downloaded = download_text(normalized_url, allow_private=allow_private, timeout=timeout)
+    used_format_fallback = False
+    try:
+        downloaded = download_text(normalized_url, allow_private=allow_private, timeout=timeout)
+    except Exception as first_error:
+        alternate = alternate_fsl_url(normalized_url)
+        if not alternate:
+            raise
+        try:
+            downloaded = download_text(alternate, allow_private=allow_private, timeout=timeout)
+            used_format_fallback = True
+        except Exception as second_error:
+            raise RuntimeError(f"primary format failed: {first_error}; alternate fsl format failed: {second_error}") from second_error
     parser = SubscriptionParser()
     report = parser.parse(downloaded.text, source="main subscription")
 
@@ -54,6 +65,7 @@ def inspect_subscription(
             "bytes_read": downloaded.bytes_read,
             "content_type": downloaded.content_type,
             "raw_content_persisted": False,
+            "fsl_format_fallback_used": used_format_fallback,
         },
         "parse": public_report,
         "resolution": resolution,

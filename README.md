@@ -65,7 +65,7 @@ ipbatch monitor --config monitor.example.json [--once]
 
 - `scan` 支持 IPv4、IPv6、CIDR（每个 CIDR 最多展开 4096 个地址）及包含 IP 的混合文本；单次最多 500 个唯一公网 IP。
 - `subscription` 支持 Clash/Mihomo YAML、Base64 通用订阅、SS、SSR、VMess、VLESS、Trojan、Hysteria/Hysteria2/Hy2、TUIC、SOCKS4/5、HTTP(S) 代理 URI、`dialer-proxy` 链式引用与远程 `proxy-providers`。
-- `sn://subscription` 会提取其中显式提供的 HTTP(S) 订阅地址；`fsl64`/`fslyaml` URL 路径保持原查询串，不重写 Token。
+- `sn://subscription` 会提取其中显式提供的 HTTP(S) 订阅地址；`fsl64`/`fslyaml` 首选格式失败时自动尝试另一格式，URL 查询串逐字保留，不重写 Token。
 - 公网订阅强制 HTTPS。本机/局域网 HTTP 必须显式传入 `--allow-private-subscription`；解析出的私网、保留、CGNAT 或文档地址不会送到公网情报源。
 - 原始订阅内容只在当前进程内存在。CLI 默认不打印原文，保存节点清单时也不输出密码、UUID、Token 或用户信息。
 

@@ -42,6 +42,10 @@ public final class ParserSmokeTest {
         check(hkPolicy.contains("机房"), "机房风险应进入 AI 风控推断");
         IpResult cn = new IpResult("9.9.9.9"); cn.countryCode = "CN";
         check(AiPolicyEvaluator.evaluate(cn).contains("个人版不支持"), "中国大陆 Gemini 应标注 Workspace 例外");
+        String original = "https://example.com/api/fsl64/path?token=a%2Fb&x=1&x=2";
+        String alternate = SubscriptionDownloader.alternateFormatUrl(original);
+        check("https://example.com/api/fslyaml/path?token=a%2Fb&x=1&x=2".equals(alternate), "fsl 格式切换必须保留原查询串");
+        check(original.equals(SubscriptionDownloader.alternateFormatUrl(alternate)), "fsl 格式切换必须可往返");
         System.out.println("ParserSmokeTest OK");
     }
 

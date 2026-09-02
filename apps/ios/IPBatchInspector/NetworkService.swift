@@ -82,10 +82,23 @@ enum NetworkService {
 
     static func inspectSubscription(_ text: String, allowPrivate: Bool) async throws -> SubscriptionResult {
         let normalized = try unwrapSubscriptionURL(text)
-        let loader = SafeTextLoader(allowPrivate: allowPrivate)
-        let (data, _) = try await loader.load(normalized)
+        var candidates = [normalized]
+        if let alternate = alternateFormatURL(normalized) { candidates.append(alternate) }
+        var payload: Data?
+        var lastError: Error?
+        var usedFormatFallback = false
+        for (index, candidate) in candidates.enumerated() {
+            do {
+                let loader = SafeTextLoader(allowPrivate: allowPrivate)
+                payload = try await loader.load(candidate).0
+                usedFormatFallback = index > 0
+                break
+            } catch { lastError = error }
+        }
+        guard let data = payload else { throw lastError ?? NetworkError.response("Subscription download failed.") }
         guard let content = String(data: data, encoding: .utf8) else { throw NetworkError.response("Subscription is not UTF-8 text.") }
         var (nodes, providers, warnings) = SubscriptionParser.parse(content)
+        if usedFormatFallback { warnings.append("Primary fsl format failed; alternate fsl64/fslyaml format was used with the original query preserved.") }
         for provider in providers.prefix(20) {
             guard let providerURL = URL(string: provider) else { continue }
             do {
@@ -259,6 +272,16 @@ enum NetworkService {
         }
         guard let url = URL(string: trimmed) else { throw NetworkError.policy("Invalid subscription URL.") }
         return url
+    }
+
+    private static func alternateFormatURL(_ url: URL) -> URL? {
+        let original = url.absoluteString
+        guard let regex = try? NSRegularExpression(pattern: #"(?i)(^|/)(fsl64|fslyaml)(?=/|\?|#|$)"#),
+              let match = regex.firstMatch(in: original, range: NSRange(original.startIndex..., in: original)),
+              let formatRange = Range(match.range(at: 2), in: original) else { return nil }
+        let current = original[formatRange].lowercased()
+        let replacement = current == "fsl64" ? "fslyaml" : "fsl64"
+        return URL(string: original.replacingCharacters(in: formatRange, with: replacement))
     }
 
     private static func fetchObject(_ address: String) async throws -> [String: Any] {

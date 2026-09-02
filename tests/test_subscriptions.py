@@ -2,7 +2,7 @@ import base64
 import json
 import unittest
 
-from ipbatch_inspector.subscriptions import SubscriptionParser, subscription_url_from_input
+from ipbatch_inspector.subscriptions import SubscriptionParser, alternate_fsl_url, subscription_url_from_input
 
 
 def b64(text: str) -> str:
@@ -59,6 +59,12 @@ proxies:
         wrapped = "sn://subscription?url=" + target
         self.assertEqual(target, subscription_url_from_input(wrapped))
         self.assertEqual(target, subscription_url_from_input("sn://subscription/" + b64(target)))
+
+    def test_fsl_format_swap_preserves_raw_query(self):
+        original = "https://example.com/api/fsl64/path?token=a%2Fb&x=1&x=2"
+        alternate = alternate_fsl_url(original)
+        self.assertEqual("https://example.com/api/fslyaml/path?token=a%2Fb&x=1&x=2", alternate)
+        self.assertEqual(original, alternate_fsl_url(alternate))
 
 
 if __name__ == "__main__":
