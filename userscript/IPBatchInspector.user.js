@@ -2,7 +2,7 @@
 // @name         IPBatchInspector 4
 // @name:zh-CN   IPBatchInspector 4 - IP/订阅批量检测
 // @namespace    https://github.com/zizegak916-glitch/0612
-// @version      4.0.0
+// @version      4.1.0
 // @description  检测当前出口、批量查询公网 IP、只解析代理订阅并测试公开 AI 入口；永不连接订阅节点端口。
 // @author       IPBatchInspector contributors
 // @license      MIT
@@ -22,11 +22,13 @@
 (function () {
   'use strict';
 
-  const VERSION = '4.0.0';
+  const VERSION = '4.1.0';
   const MAX_BODY = 5 * 1024 * 1024;
   const MAX_NODES = 500;
   const MAX_PROVIDERS = 8;
   const STORAGE_KEY = 'ipbatch.encryptedSubscriptions.v1';
+  const EVIDENCE_CACHE_KEY = 'ipbatch.providerEvidence.v1';
+  const EVIDENCE_CACHE_TTL = 15 * 60 * 1000;
   const API_TIMEOUT = 12000;
   const SUPPORTED = new Set([
     'ss', 'ssr', 'vmess', 'vless', 'trojan', 'hysteria', 'hysteria2', 'hy2',
@@ -37,9 +39,17 @@
   let panel;
   let output;
   let lastResult = null;
+  let nextRdapStart = 0;
 
   function now() {
     return new Date().toISOString();
+  }
+
+  async function throttleRdap() {
+    const scheduled = Math.max(Date.now(), nextRdapStart);
+    nextRdapStart = scheduled + 1050;
+    const wait = scheduled - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   }
 
   function request(options) {
@@ -93,6 +103,16 @@
     return text.includes(':') && /^[0-9a-f:.]+$/i.test(text);
   }
 
+  function canonicalIp(value) {
+    const text = String(value || '').replace(/^\[|\]$/g, '');
+    if (isIPv4(text)) return text.split('.').map(Number).join('.');
+    if (isIPv6(text)) {
+      try { return new URL(`http://[${text}]/`).hostname.toLowerCase().replace(/^\[|\]$/g, ''); }
+      catch (_) { return text.toLowerCase(); }
+    }
+    return '';
+  }
+
   function isPrivateHost(hostname) {
     const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
     if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
@@ -115,21 +135,22 @@
   async function resolveHost(hostname) {
     const host = String(hostname || '').replace(/^\[|\]$/g, '');
     if (isIPv4(host) || isIPv6(host)) return [host];
-    const answers = [];
-    for (const type of ['A', 'AAAA']) {
+    const batches = await Promise.all(['A', 'AAAA'].map(async (type) => {
       try {
         const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=${type}`;
         const response = await request({ url, headers: { Accept: 'application/dns-json' } });
-        if (response.status !== 200) continue;
+        if (response.status !== 200) return [];
         const body = JSON.parse(response.text);
+        const answers = [];
         for (const answer of body.Answer || []) {
           if ((answer.type === 1 || answer.type === 28) && (isIPv4(answer.data) || isIPv6(answer.data))) answers.push(answer.data);
         }
+        return answers;
       } catch (_) {
-        // Both record types are attempted; individual DNS failures remain visible through an empty result.
+        return [];
       }
-    }
-    return [...new Set(answers)];
+    }));
+    return [...new Set(batches.flat())];
   }
 
   async function validateSubscriptionUrl(raw, allowPrivate) {
@@ -349,11 +370,140 @@
     return { url: approved.ipbatchRaw || approved.href, elapsedMs: response.elapsedMs, ...parsed };
   }
 
-  async function inspectIp(ip) {
+  function providerFields(source, ip, data) {
+    const fields = {};
+    if (source === 'ipapi') {
+      if (data.error) throw new Error(data.message || 'ipapi 拒绝查询');
+      if (data.ip && canonicalIp(data.ip) !== canonicalIp(ip)) throw new Error('ipapi 回显了不同目标 IP');
+      const location = data.location || data;
+      const asn = typeof data.asn === 'object' ? data.asn : {};
+      Object.assign(fields, {
+        country: location.country, country_code: location.country_code || location.countryCode,
+        region: location.state || location.region, city: location.city,
+        asn: asn.asn || data.asn, organization: asn.org || asn.name
+      });
+      for (const key of ['is_proxy', 'is_vpn', 'is_tor', 'is_datacenter', 'is_abuser']) {
+        if (Object.prototype.hasOwnProperty.call(data, key)) fields[key.slice(3)] = Boolean(data[key]);
+      }
+    } else if (source === 'proxycheck') {
+      if (String(data.status || '').toLowerCase() !== 'ok') throw new Error(data.message || 'proxycheck 状态异常');
+      const targetKey = Object.keys(data).find((key) => canonicalIp(key) && canonicalIp(key) === canonicalIp(ip));
+      const item = targetKey ? data[targetKey] : null;
+      if (!item || typeof item !== 'object') throw new Error('proxycheck 未返回目标 IP');
+      const type = String(item.type || '');
+      Object.assign(fields, {
+        country: item.country, country_code: item.isocode || item.country_code,
+        region: item.region, city: item.city, asn: item.asn,
+        organization: item.organisation || item.provider, proxy: String(item.proxy).toLowerCase() === 'yes',
+        vpn: type.toLowerCase().includes('vpn'), tor: type.toLowerCase().includes('tor'),
+        risk: item.risk, last_seen: item.last_seen || item['last seen']
+      });
+    } else if (source === 'geojs') {
+      if (data.ip && canonicalIp(data.ip) !== canonicalIp(ip)) throw new Error('GeoJS 回显了不同目标 IP');
+      Object.assign(fields, {
+        country: data.country, country_code: data.country_code, region: data.region, city: data.city,
+        asn: data.asn, organization: data.organization_name || data.organization
+      });
+    } else if (source === 'rdap') {
+      Object.assign(fields, {
+        start_address: data.startAddress, end_address: data.endAddress,
+        registration_name: data.name || data.handle, registration_country: data.country,
+        registration_type: data.type, registration_status: data.status
+      });
+    } else {
+      if (!data.data || typeof data.data !== 'object') throw new Error('RIPEstat 缺少 data');
+      const last = data.data.last_seen || {};
+      Object.assign(fields, {
+        prefix: last.prefix, origin_asn: last.origin ? `AS${String(last.origin).replace(/\D/g, '')}` : '',
+        last_seen: last.time, announced: Boolean(data.data.last_seen)
+      });
+    }
+    return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+  }
+
+  function consensus(evidence, field, aliases = []) {
+    const values = new Map();
+    for (const item of evidence.filter((row) => row.ok)) {
+      const raw = [field, ...aliases].map((key) => item.fields[key]).find((value) => value !== undefined && value !== '');
+      if (raw === undefined) continue;
+      const digits = field === 'asn' ? String(raw).replace(/\D/g, '') : '';
+      const display = field === 'asn' && digits ? `AS${digits}` : String(raw).trim();
+      const key = ['country_code', 'asn'].includes(field) ? display.toUpperCase() : display.toLocaleLowerCase();
+      if (!values.has(key)) values.set(key, { display, sources: [] });
+      values.get(key).sources.push(item.source);
+    }
+    const ordered = [...values.values()].sort((a, b) => b.sources.length - a.sources.length);
+    if (!ordered.length) return null;
+    return {
+      value: ordered[0].display, agree: ordered[0].sources.length,
+      observed: ordered.reduce((sum, item) => sum + item.sources.length, 0), sources: ordered[0].sources,
+      conflict: ordered.length > 1 ? ordered.map((item) => ({ value: item.display, sources: item.sources })) : null
+    };
+  }
+
+  function signalSummary(evidence, flag) {
+    const positive = [], negative = [], unknown = [];
+    for (const item of evidence.filter((row) => row.ok)) {
+      if (!Object.prototype.hasOwnProperty.call(item.fields, flag)) unknown.push(item.source);
+      else (item.fields[flag] ? positive : negative).push(item.source);
+    }
+    let state = 'unknown';
+    if (positive.length && negative.length) state = 'disputed';
+    else if (positive.length >= 2 || (flag === 'tor' && positive.length)) state = 'confirmed';
+    else if (positive.length) state = 'reported';
+    else if (negative.length) state = 'not_reported';
+    return { state, positiveSources: positive, negativeSources: negative, unknownSources: unknown };
+  }
+
+  function finalizeIntel(ip, evidence) {
+    const successful = evidence.filter((item) => item.ok);
+    const derived = {};
+    const conflicts = [];
+    for (const [field, aliases] of [['country', []], ['country_code', []], ['region', []], ['city', []], ['asn', ['origin_asn']], ['organization', []]]) {
+      const value = consensus(evidence, field, aliases);
+      if (value) derived[field] = value;
+      if (value && value.conflict) conflicts.push({ field, values: value.conflict });
+    }
+    const signals = Object.fromEntries(['proxy', 'vpn', 'tor', 'datacenter', 'abuser'].map((flag) => [flag, signalSummary(evidence, flag)]));
+    for (const [flag, value] of Object.entries(signals)) {
+      if (value.state === 'disputed') conflicts.push({ field: flag, true: value.positiveSources, false: value.negativeSources });
+    }
+    const riskScores = Object.fromEntries(successful.filter((item) => Number.isFinite(Number(item.fields.risk)))
+      .map((item) => [item.source, Math.max(0, Math.min(100, Number(item.fields.risk))) ]));
+    const importantConflict = conflicts.some((item) => ['country_code', 'asn'].includes(item.field));
+    const keyFieldsConfirmed = (derived.country_code?.agree || 0) >= 2 && (derived.asn?.agree || 0) >= 2;
+    const confidence = successful.length >= 3 && !importantConflict && keyFieldsConfirmed
+      ? { level: 'high', reason: '至少三源成功，国家代码和 ASN 均至少双源一致' }
+      : successful.length >= 2 ? { level: 'medium', reason: '多源可用，请检查冲突列表' }
+        : successful.length === 1 ? { level: 'low', reason: '仅一个来源成功' }
+          : { level: 'none', reason: '没有来源返回可用证据' };
+    return { ip, queriedAt: now(), status: successful.length >= 2 ? 'ok' : successful.length ? 'partial' : 'failed', confidence, consensus: derived, conflicts, signals, riskScores, evidence };
+  }
+
+  function cacheGet(ip, fresh) {
+    if (fresh) return null;
+    const cache = GM_getValue(EVIDENCE_CACHE_KEY, {});
+    const item = cache && cache[ip];
+    const age = item ? Date.now() - Number(item.storedAt || 0) : Infinity;
+    if (!item || age < 0 || age > EVIDENCE_CACHE_TTL) return null;
+    return { ...item.result, cache: { hit: true, ageSeconds: Math.floor(age / 1000), ttlSeconds: EVIDENCE_CACHE_TTL / 1000 } };
+  }
+
+  function cachePut(ip, result) {
+    if (result.status === 'failed') return;
+    const cache = GM_getValue(EVIDENCE_CACHE_KEY, {});
+    cache[ip] = { storedAt: Date.now(), result };
+    const newest = Object.entries(cache).sort((a, b) => Number(b[1].storedAt || 0) - Number(a[1].storedAt || 0)).slice(0, 1000);
+    GM_setValue(EVIDENCE_CACHE_KEY, Object.fromEntries(newest));
+  }
+
+  async function inspectIp(ip, fresh = false) {
+    const cached = cacheGet(ip, fresh);
+    if (cached) return cached;
     const encoded = encodeURIComponent(ip);
     const definitions = [
       ['ipapi', `https://api.ipapi.is/?q=${encoded}`],
-      ['proxycheck', `https://proxycheck.io/v2/${encoded}?vpn=1&asn=1&risk=1`],
+      ['proxycheck', `https://proxycheck.io/v2/${encoded}?vpn=1&asn=1&risk=1&seen=1`],
       ['geojs', `https://get.geojs.io/v1/ip/geo/${encoded}.json`],
       ['rdap', `https://rdap.org/ip/${encoded}`],
       ['ripestat', `https://stat.ripe.net/data/routing-status/data.json?resource=${encoded}`]
@@ -361,15 +511,20 @@
     const evidence = await Promise.all(definitions.map(async ([source, url]) => {
       const queriedAt = now();
       try {
+        if (source === 'rdap') await throttleRdap();
         const response = await request({ url });
         let data = null;
         try { data = JSON.parse(response.text); } catch (_) { data = { excerpt: response.text.slice(0, 240) }; }
-        return { source, queriedAt, elapsedMs: response.elapsedMs, status: response.status, ok: response.status >= 200 && response.status < 300, data };
+        if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
+        const fields = providerFields(source, ip, data);
+        return { source, queriedAt, elapsedMs: response.elapsedMs, status: response.status, ok: true, fields, data };
       } catch (error) {
         return { source, queriedAt, ok: false, error: error.message };
       }
     }));
-    return { ip, queriedAt: now(), evidence };
+    const result = finalizeIntel(ip, evidence);
+    cachePut(ip, result);
+    return result;
   }
 
   async function mapLimit(items, limit, fn, progress) {
@@ -400,21 +555,30 @@
       'https://api.ipify.org?format=json',
       'https://get.geojs.io/v1/ip.json'
     ];
-    const errors = [];
-    for (const url of attempts) {
+    const observations = await Promise.all(attempts.map(async (url) => {
       try {
         const response = await request({ url });
         const data = JSON.parse(response.text);
         const ip = data.ip;
-        if (ip && !isPrivateHost(ip)) return { route: '当前浏览器/扩展所用系统路由', discoveredAt: now(), discoveryUrl: url, details: await inspectIp(ip) };
+        if (!ip || isPrivateHost(ip)) throw new Error('未返回公网 IP');
+        return { url, ip, ok: true, elapsedMs: response.elapsedMs };
       } catch (error) {
-        errors.push(`${url}: ${error.message}`);
+        return { url, ok: false, error: error.message };
       }
-    }
-    throw new Error(`出口 IP 检测失败：${errors.join('; ')}`);
+    }));
+    const successful = observations.filter((item) => item.ok);
+    if (!successful.length) throw new Error(`出口 IP 检测失败：${observations.map((item) => `${item.url}: ${item.error}`).join('; ')}`);
+    const votes = new Map();
+    for (const item of successful) votes.set(item.ip, (votes.get(item.ip) || 0) + 1);
+    const ip = [...votes].sort((a, b) => b[1] - a[1])[0][0];
+    return {
+      route: '当前浏览器/扩展所用系统路由', discoveredAt: now(), ip,
+      agreement: { matchingSources: votes.get(ip), successfulSources: successful.length, observations },
+      details: await inspectIp(ip, true)
+    };
   }
 
-  async function inspectSubscription(url, allowPrivate, enrich) {
+  async function inspectSubscription(url, allowPrivate, enrich, fresh = false) {
     const main = await downloadSubscription(url, allowPrivate, 'main');
     if (!main.nodes.length) {
       const alternate = alternateFslUrl(main.url);
@@ -425,15 +589,18 @@
         main.formatFallback = alternate;
       }
     }
-    const providerReports = [];
-    for (const providerUrl of [...new Set(main.providers)].slice(0, MAX_PROVIDERS)) {
+    const providerUrls = [...new Set(main.providers)].slice(0, MAX_PROVIDERS);
+    const providerReports = await Promise.all(providerUrls.map(async (providerUrl) => {
       try {
         const report = await downloadSubscription(providerUrl, allowPrivate, 'proxy-provider');
-        main.nodes.push(...report.nodes);
-        providerReports.push({ host: new URL(providerUrl).hostname, ok: true, nodes: report.nodes.length });
+        return { host: new URL(providerUrl).hostname, ok: true, nodes: report.nodes.length, report };
       } catch (error) {
-        providerReports.push({ host: (() => { try { return new URL(providerUrl).hostname; } catch (_) { return 'invalid'; } })(), ok: false, error: error.message });
+        return { host: (() => { try { return new URL(providerUrl).hostname; } catch (_) { return 'invalid'; } })(), ok: false, error: error.message };
       }
+    }));
+    for (const item of providerReports) {
+      if (item.ok) main.nodes.push(...item.report.nodes);
+      delete item.report;
     }
     const deduped = [];
     const seen = new Set();
@@ -444,20 +611,24 @@
         deduped.push(item);
       }
     }
-    setStatus(`正在解析节点域名 0/${deduped.length}`);
-    const resolved = await mapLimit(deduped, 4, async (item) => {
-      const addresses = await resolveHost(item.host);
+    const uniqueHosts = [...new Set(deduped.map((item) => item.host))];
+    setStatus(`正在解析节点域名 0/${uniqueHosts.length}`);
+    const hostAnswers = await mapLimit(uniqueHosts, 8, async (host) => ({ host, addresses: await resolveHost(host) }),
+      (done, total) => setStatus(`正在解析节点域名 ${done}/${total}（从未连接节点端口）`));
+    const addressMap = new Map(hostAnswers.map((item) => [item.host, item.addresses]));
+    const resolved = deduped.map((item) => {
+      const addresses = addressMap.get(item.host) || [];
       return {
         ...item,
         addresses: addresses.filter((ip) => !isPrivateHost(ip)),
         rejectedAddresses: addresses.filter(isPrivateHost)
       };
-    }, (done, total) => setStatus(`正在解析节点域名 ${done}/${total}（从未连接节点端口）`));
+    });
     const ips = [...new Set(resolved.flatMap((item) => item.addresses))];
     let intelligence = [];
     if (enrich && ips.length) {
       const targets = ips.slice(0, 30);
-      intelligence = await mapLimit(targets, 3, inspectIp, (done, total) => setStatus(`正在查询 IP 情报 ${done}/${total}`));
+      intelligence = await mapLimit(targets, 4, (ip) => inspectIp(ip, fresh), (done, total) => setStatus(`正在查询 IP 情报 ${done}/${total}`));
     }
     return {
       kind: 'subscription',
@@ -483,7 +654,7 @@
       ['Gemini Web', 'https://gemini.google.com/'],
       ['Google Generative Language API', 'https://generativelanguage.googleapis.com/v1beta/models']
     ];
-    const results = await mapLimit(targets, 3, async ([name, url]) => {
+    const results = await mapLimit(targets, 6, async ([name, url]) => {
       const queriedAt = now();
       try {
         const response = await request({ url, anonymous: true });
@@ -629,7 +800,7 @@
       <textarea data-field="ips" placeholder="粘贴公网 IPv4/IPv6；自动去重，最多 500 个"></textarea>
       <div class="row"><button data-action="scan">批量 IP 情报</button></div>
       <div class="grid"><input type="text" data-field="subscription" autocomplete="off" spellcheck="false" placeholder="HTTPS 订阅、sn://subscription…"><button data-action="subscription">只解析订阅</button></div>
-      <div class="row"><label><input type="checkbox" data-field="allow-private">显式允许本机/私网订阅</label><label><input type="checkbox" data-field="enrich" checked>查询前 30 个节点 IP 的五源情报</label></div>
+      <div class="row"><label><input type="checkbox" data-field="allow-private">显式允许本机/私网订阅</label><label><input type="checkbox" data-field="enrich" checked>查询前 30 个节点 IP 的五源情报</label><label><input type="checkbox" data-field="fresh">强制刷新（忽略 15 分钟缓存）</label></div>
       <div class="row"><button class="secondary" data-action="save">口令加密保存</button><button class="secondary" data-action="load">载入已保存</button><button class="secondary" data-action="export">导出 JSON</button></div>
       <div class="status" data-role="status">就绪 · 当前网页不会自动发起检测</div><pre class="out" data-role="output">权限说明：@connect * 仅用于访问用户输入的订阅域名；固定情报源和 DoH 也走 GM 请求。安装前可直接审查本文件全部源码。</pre>
     `;
@@ -645,13 +816,14 @@
       if (action === 'scan') run('正在批量查询 IP 情报…', async () => {
         const ips = extractIps(panel.querySelector('[data-field="ips"]').value);
         if (!ips.length) throw new Error('没有可查询的公网 IP');
-        const results = await mapLimit(ips, 3, inspectIp, (done, total) => setStatus(`批量 IP 情报 ${done}/${total}`));
+        const fresh = panel.querySelector('[data-field="fresh"]').checked;
+        const results = await mapLimit(ips, 4, (ip) => inspectIp(ip, fresh), (done, total) => setStatus(`批量 IP 情报 ${done}/${total}`));
         return { kind: 'batch-ip', checkedAt: now(), count: results.length, results };
       });
       if (action === 'subscription') run('正在安全下载并解析订阅…', () => {
         const url = panel.querySelector('[data-field="subscription"]').value.trim();
         if (!url) throw new Error('请输入订阅地址');
-        return inspectSubscription(url, panel.querySelector('[data-field="allow-private"]').checked, panel.querySelector('[data-field="enrich"]').checked);
+        return inspectSubscription(url, panel.querySelector('[data-field="allow-private"]').checked, panel.querySelector('[data-field="enrich"]').checked, panel.querySelector('[data-field="fresh"]').checked);
       });
       if (action === 'save') run('正在加密保存…', async () => { await saveCurrentSubscription(); return { ok: true, savedAt: now(), plaintextStored: false }; });
       if (action === 'load') run('正在载入加密订阅…', async () => { await loadSavedSubscription(); return { ok: true, loadedAt: now() }; });

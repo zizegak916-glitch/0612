@@ -4,6 +4,7 @@ import base64
 import json
 import re
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .iptools import resolve_node_host
@@ -333,25 +334,36 @@ class SubscriptionParser:
             return None
 
 
-def resolve_nodes(nodes: list[NodeEndpoint], max_ips: int = 500) -> dict[str, object]:
+def resolve_nodes(nodes: list[NodeEndpoint], max_ips: int = 500, workers: int = 24) -> dict[str, object]:
     """Map nodes to public IPs. Ports are deliberately never passed to the resolver."""
     origins: dict[str, list[dict[str, object]]] = {}
     local_addresses: dict[str, list[str]] = {}
     errors: dict[str, str] = {}
+    hosts = list(dict.fromkeys(node.host for node in nodes))
+    resolved: dict[str, tuple[list[str], list[str]]] = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, 32))) as pool:
+        futures = {pool.submit(resolve_node_host, host): host for host in hosts}
+        for future in as_completed(futures):
+            host = futures[future]
+            try:
+                resolved[host] = future.result()
+            except OSError as exc:
+                errors[host] = str(exc)
+
     for node in nodes:
-        if len(origins) >= max_ips:
-            break
-        try:
-            public, local = resolve_node_host(node.host)
-        except OSError as exc:
-            errors[node.host] = str(exc)
+        answer = resolved.get(node.host)
+        if answer is None:
             continue
+        public, local = answer
         if local:
             local_addresses[node.host] = local
         for ip in public:
             if len(origins) >= max_ips and ip not in origins:
                 break
             origins.setdefault(ip, []).append(node.redacted_dict())
+        if len(origins) >= max_ips:
+            # Continue only while existing IPs may need their origin-node mapping.
+            continue
     return {
         "public_ips": list(origins),
         "origins": origins,

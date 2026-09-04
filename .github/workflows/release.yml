@@ -100,6 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      IPBATCH_VERSION: ${{ needs.metadata.outputs.version }}
       IPBATCH_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       IPBATCH_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       IPBATCH_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -123,9 +124,9 @@ jobs:
         with:
           name: release-android
           path: |
-            apps/android/build/IPBatchInspector-v4.0.0-android-release.apk
-            apps/android/build/IPBatchInspector-v4.0.0-android-debug.apk
-            apps/android/build/IPBatchInspector-v4.0.0-android-unsigned.apk
+            apps/android/build/IPBatchInspector-v*-android-release.apk
+            apps/android/build/IPBatchInspector-v*-android-debug.apk
+            apps/android/build/IPBatchInspector-v*-android-unsigned.apk
           if-no-files-found: warn
 
   ios:
@@ -171,5 +172,5 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "$RELEASE_TITLE" \
-              --notes-file docs/RELEASE_NOTES_v4.0.0.md
+              --notes-file "docs/RELEASE_NOTES_$RELEASE_TAG.md"
           fi

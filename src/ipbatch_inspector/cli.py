@@ -23,29 +23,32 @@ def _json(data: Any) -> None:
 
 
 def _table(results: list[dict[str, Any]]) -> None:
-    columns = ("ip", "status", "country_code", "country", "asn", "organization")
+    columns = ("ip", "status", "confidence", "country_code", "country", "asn", "organization")
+    def display(row: dict[str, Any], column: str) -> str:
+        value = row.get(column, "")
+        return str(value.get("level", "")) if column == "confidence" and isinstance(value, dict) else str(value)
     widths = {column: len(column) for column in columns}
     for row in results:
         for column in columns:
-            widths[column] = min(36, max(widths[column], len(str(row.get(column, "")))))
+            widths[column] = min(36, max(widths[column], len(display(row, column))))
     print("  ".join(column.upper().ljust(widths[column]) for column in columns))
     print("  ".join("-" * widths[column] for column in columns))
     for row in results:
-        print("  ".join(str(row.get(column, ""))[: widths[column]].ljust(widths[column]) for column in columns))
+        print("  ".join(display(row, column)[: widths[column]].ljust(widths[column]) for column in columns))
 
 
 def _csv(path: str, results: list[dict[str, Any]]) -> None:
     fields = [
         "ip", "status", "country", "country_code", "region", "city", "asn", "organization",
         "network_type", "prefix", "rpki", "proxy", "vpn", "tor", "datacenter", "abuser",
-        "risk_scores", "ai_policy", "evidence",
+        "risk_scores", "signals", "consensus", "conflicts", "confidence", "ai_policy", "evidence",
     ]
     with Path(path).open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for result in results:
             row = {key: result.get(key, "") for key in fields}
-            for key in ("risk_scores", "ai_policy", "evidence"):
+            for key in ("risk_scores", "signals", "consensus", "conflicts", "confidence", "ai_policy", "evidence"):
                 row[key] = json.dumps(row[key], ensure_ascii=False, default=str)
             writer.writerow(row)
 
@@ -66,7 +69,9 @@ def _scan(args: argparse.Namespace) -> int:
     if not ips:
         print("No valid IP address was found.", file=sys.stderr)
         return 2
-    results = scan_many(ips, args.sources, args.timeout, args.workers)
+    results = scan_many(
+        ips, args.sources, args.timeout, args.workers, fresh=args.fresh, cache_ttl=args.cache_ttl
+    )
     for result in results:
         result.ai_policy = infer_ai_policy(result.country_code, proxy=result.proxy, vpn=result.vpn, tor=result.tor, datacenter=result.datacenter, risk_scores=result.risk_scores)
     rows = [item.as_dict() for item in results]
@@ -93,7 +98,16 @@ def _subscription(args: argparse.Namespace) -> int:
     else:
         print("Provide URL, --url-file, or --saved.", file=sys.stderr)
         return 2
-    data = inspect_subscription(url, allow_private=args.allow_private_subscription, resolve_only=args.resolve_only, sources=args.sources, timeout=args.timeout, workers=args.workers)
+    data = inspect_subscription(
+        url,
+        allow_private=args.allow_private_subscription,
+        resolve_only=args.resolve_only,
+        sources=args.sources,
+        timeout=args.timeout,
+        workers=args.workers,
+        fresh=args.fresh,
+        cache_ttl=args.cache_ttl,
+    )
     if args.csv and data["results"]:
         _csv(args.csv, data["results"])
     if args.json:
@@ -143,6 +157,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--sources", type=_sources, default=DEFAULT_SOURCES)
     scan.add_argument("--timeout", type=float, default=12.0)
     scan.add_argument("--workers", type=int, default=4)
+    scan.add_argument("--fresh", action="store_true", help="bypass the provider-evidence cache")
+    scan.add_argument("--cache-ttl", type=int, help="override every source cache TTL in seconds")
     scan.add_argument("--json", action="store_true")
     scan.add_argument("--csv")
     scan.set_defaults(func=_scan)
@@ -162,6 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
     subscription.add_argument("--sources", type=_sources, default=DEFAULT_SOURCES)
     subscription.add_argument("--timeout", type=float, default=12.0)
     subscription.add_argument("--workers", type=int, default=4)
+    subscription.add_argument("--fresh", action="store_true", help="bypass the provider-evidence cache")
+    subscription.add_argument("--cache-ttl", type=int, help="override every source cache TTL in seconds")
     subscription.add_argument("--json", action="store_true")
     subscription.add_argument("--csv")
     subscription.set_defaults(func=_subscription)

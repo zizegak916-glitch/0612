@@ -7,6 +7,7 @@ PLATFORM_DIR="$TOOLCHAIN_DIR/platform"
 BUILD_TOOLS_DIR="$TOOLCHAIN_DIR/build-tools"
 BUILD_DIR="$PROJECT_DIR/build"
 ECJ_JAR="$TOOLCHAIN_DIR/ecj-3.37.0.jar"
+VERSION="${IPBATCH_VERSION:-4.1.0}"
 
 mkdir -p "$PLATFORM_DIR" "$BUILD_TOOLS_DIR" "$BUILD_DIR/downloads"
 
@@ -48,8 +49,8 @@ mkdir -p "$BUILD_DIR/gen" "$BUILD_DIR/classes" "$BUILD_DIR/test-classes" "$BUILD
   --java "$BUILD_DIR/gen" \
   --min-sdk-version 23 \
   --target-sdk-version 35 \
-  --version-code 5 \
-  --version-name 4.0.0 \
+  --version-code 6 \
+  --version-name "$VERSION" \
   "$BUILD_DIR/compiled.zip"
 
 find "$PROJECT_DIR/app/src/main/java" "$BUILD_DIR/gen" -name '*.java' -print > "$BUILD_DIR/sources.list"
@@ -66,14 +67,14 @@ cp "$BUILD_DIR/base.apk" "$BUILD_DIR/unsigned.apk"
 (cd "$BUILD_DIR/dex" && zip -q -j "$BUILD_DIR/unsigned.apk" classes*.dex)
 "$ZIPALIGN" -p -f 4 "$BUILD_DIR/unsigned.apk" "$BUILD_DIR/aligned.apk"
 
-UNSIGNED_APK="$BUILD_DIR/IPBatchInspector-v4.0.0-android-unsigned.apk"
+UNSIGNED_APK="$BUILD_DIR/IPBatchInspector-v$VERSION-android-unsigned.apk"
 cp "$BUILD_DIR/aligned.apk" "$UNSIGNED_APK"
 
 if [ -n "${IPBATCH_KEYSTORE:-}" ]; then
   : "${IPBATCH_KEY_ALIAS:?IPBATCH_KEY_ALIAS is required when IPBATCH_KEYSTORE is set}"
   : "${IPBATCH_KEYSTORE_PASSWORD:?IPBATCH_KEYSTORE_PASSWORD is required when IPBATCH_KEYSTORE is set}"
   : "${IPBATCH_KEY_PASSWORD:?IPBATCH_KEY_PASSWORD is required when IPBATCH_KEYSTORE is set}"
-  OUTPUT_APK="$BUILD_DIR/IPBatchInspector-v4.0.0-android-release.apk"
+  OUTPUT_APK="$BUILD_DIR/IPBatchInspector-v$VERSION-android-release.apk"
   "$APKSIGNER" sign \
     --ks "$IPBATCH_KEYSTORE" \
     --ks-key-alias "$IPBATCH_KEY_ALIAS" \
@@ -88,7 +89,7 @@ else
     -alias androiddebugkey -dname "CN=IP Batch Inspector Debug,O=Local Build,C=CN" \
     -keyalg RSA -keysize 2048 -validity 10000 >/dev/null 2>&1
   fi
-  OUTPUT_APK="$BUILD_DIR/IPBatchInspector-v4.0.0-android-debug.apk"
+  OUTPUT_APK="$BUILD_DIR/IPBatchInspector-v$VERSION-android-debug.apk"
   "$APKSIGNER" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
     --out "$OUTPUT_APK" "$BUILD_DIR/aligned.apk"
   SIGNING_KIND="development certificate (installable, not an official release signature)"

@@ -69,7 +69,7 @@ public final class AiReachabilityTester {
         report.startedAt = System.currentTimeMillis();
         final CountDownLatch latch = new CountDownLatch(ENDPOINTS.length);
         final int[] completed = new int[]{0};
-        ExecutorService executor = Executors.newFixedThreadPool(4);
+        ExecutorService executor = Executors.newFixedThreadPool(6);
         for (final Endpoint endpoint : ENDPOINTS) executor.submit(new Runnable() { @Override public void run() {
             Check check = test(endpoint, timeoutMs);
             report.checks.add(check);

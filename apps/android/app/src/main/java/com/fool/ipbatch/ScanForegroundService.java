@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ScanForegroundService extends Service {
@@ -130,6 +131,7 @@ public final class ScanForegroundService extends Service {
             executor = Executors.newFixedThreadPool(ips.size() > 12 ? 4 : 3);
             final ApiClient.Settings settings = SettingsRepository.load(this);
             final ApiClient client = new ApiClient();
+            final IpEvidenceCache cache = new IpEvidenceCache(this);
             for (final IpResult pending : new ArrayList<>(snapshot.results)) {
                 futures.add(executor.submit(new Runnable() { @Override public void run() {
                     if (cancelled.get()) {
@@ -137,7 +139,11 @@ public final class ScanForegroundService extends Service {
                         finishResult(pending);
                         return;
                     }
-                    IpResult done = client.scan(pending.ip, settings);
+                    IpResult done = cache.get(pending.ip, settings);
+                    if (done == null) {
+                        done = client.scan(pending.ip, settings);
+                        cache.put(done, settings);
+                    }
                     done.origin = pending.origin;
                     if (cancelled.get()) done.status = "已取消";
                     finishResult(done);
@@ -161,10 +167,20 @@ public final class ScanForegroundService extends Service {
                 SubscriptionParser.Report parsed = SubscriptionParser.parse(download.content);
                 List<String> providerUrls = new ArrayList<>(parsed.providerUrls);
                 int providerOk = 0, providerFailed = 0;
-                for (int i = 0; i < providerUrls.size() && i < 10 && !cancelled.get(); i++) {
-                    String providerUrl = providerUrls.get(i); if (providerUrl.equals(url)) continue;
+                List<String> requestedProviders = new ArrayList<>();
+                for (int i = 0; i < providerUrls.size() && i < 10; i++) if (!providerUrls.get(i).equals(url)) requestedProviders.add(providerUrls.get(i));
+                ExecutorService providerPool = Executors.newFixedThreadPool(Math.max(1, Math.min(6, requestedProviders.size())));
+                List<Future<SubscriptionDownloader.Download>> providerFutures = new ArrayList<>();
+                for (final String providerUrl : requestedProviders) providerFutures.add(providerPool.submit(new Callable<SubscriptionDownloader.Download>() {
+                    @Override public SubscriptionDownloader.Download call() throws Exception {
+                        return new SubscriptionDownloader().download(providerUrl, userAgent, 12000, allowPrivate);
+                    }
+                }));
+                providerPool.shutdown();
+                for (Future<SubscriptionDownloader.Download> providerFuture : providerFutures) {
+                    if (cancelled.get()) { providerFuture.cancel(true); continue; }
                     try {
-                        SubscriptionDownloader.Download nested = new SubscriptionDownloader().download(providerUrl, userAgent, 12000, allowPrivate);
+                        SubscriptionDownloader.Download nested = providerFuture.get();
                         SubscriptionParser.merge(parsed, SubscriptionParser.parse(nested.content)); providerOk++;
                     } catch (Exception ignored) { providerFailed++; }
                 }

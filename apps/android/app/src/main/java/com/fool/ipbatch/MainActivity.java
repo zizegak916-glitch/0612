@@ -679,7 +679,7 @@ public final class MainActivity extends Activity {
                 : (r.riskScore == null ? "风险分：无数字评分（按来源查看标记）"
                 : "最高风险分：" + r.riskScore + "/100 · " + r.riskSource + "（未跨源平均）"));
         v.score.setTextColor(color);
-        v.flags.setText("风险标记：" + r.flagsText());
+        v.flags.setText("风险标记：" + r.flagsText() + "\n信号共识：" + r.signalSummary);
         v.location.setText("地理归属：" + r.locationText());
         v.extra.setText("地理补充：" + r.detailText());
         v.network.setText("网络归属：" + r.networkText());
@@ -687,9 +687,11 @@ public final class MainActivity extends Activity {
         v.registration.setText("注册：" + (r.registration.isEmpty() ? "未返回" : r.registration));
         v.routing.setText("BGP/RPKI：" + (r.routing.isEmpty() ? "未返回" : r.routing));
         v.timing.setText("检测：成功源 " + r.successfulSources + " · 总耗时 " + r.durationMs() + " ms"
+                + " · 可信度 " + r.confidence
                 + (r.freshness.isEmpty() ? " · 上游未提供统一更新时间" : " · " + r.freshness));
         String detail = "逐来源证据：\n" + IpResult.join(r.sourceEvidence, "\n")
-                + (r.sourceDetails.isEmpty() ? "" : "\n字段明细：\n" + IpResult.join(r.sourceDetails, "\n"));
+                + (r.sourceDetails.isEmpty() ? "" : "\n字段明细：\n" + IpResult.join(r.sourceDetails, "\n"))
+                + (r.conflicts.isEmpty() ? "\n字段冲突：无" : "\n字段冲突（已保留多数结果）：\n" + IpResult.join(r.conflicts, "\n"));
         if (!r.errors.isEmpty()) detail += "\n错误/缺失：" + IpResult.join(r.errors, "；");
         v.sources.setText(detail); v.sources.setVisibility(View.VISIBLE);
     }
@@ -775,6 +777,7 @@ public final class MainActivity extends Activity {
         final CheckBox rdap = checkbox("RDAP（注册机构、网段、状态、事件）", prefs.getBoolean("rdap", true));
         final CheckBox ripe = checkbox("RIPEstat（BGP前缀、Origin ASN、RPKI）", prefs.getBoolean("ripe", true));
         final CheckBox ping0 = checkbox("Ping0 官方付费 API", prefs.getBoolean("ping0", false));
+        final CheckBox useCache = checkbox("使用 15 分钟成功结果缓存（关闭即强制刷新）", prefs.getBoolean("use_cache", true));
         final EditText ping0Key = passwordField("Ping0 API Key", secretValue("ping0_key"));
         final EditText userAgent = new EditText(this);
         userAgent.setHint("订阅 User-Agent"); userAgent.setText(prefs.getString("subscription_ua", "Clash.Meta"));
@@ -782,7 +785,7 @@ public final class MainActivity extends Activity {
         TextView privacy = label("订阅链接和 API Key 使用 Android Keystore 加密保存；只在用户点击时识别出口。公网目标 IP 会逐个发送给启用的数据源。", 12, MUTED, Typeface.NORMAL);
         privacy.setPadding(0, dp(12), 0, 0);
         form.addView(ipapi); form.addView(ipapiKey, matchWrap()); form.addView(proxy); form.addView(proxyKey, matchWrap());
-        form.addView(geo); form.addView(rdap); form.addView(ripe); form.addView(ping0); form.addView(ping0Key, matchWrap());
+        form.addView(geo); form.addView(rdap); form.addView(ripe); form.addView(ping0); form.addView(ping0Key, matchWrap()); form.addView(useCache);
         form.addView(userAgent, matchWrap()); form.addView(privacy);
         final AlertDialog alert = new AlertDialog.Builder(this).setTitle("数据源与订阅设置").setView(form)
                 .setNegativeButton("取消", null).setPositiveButton("保存", null).create();
@@ -798,7 +801,7 @@ public final class MainActivity extends Activity {
             } catch (Exception e) { toast("密钥加密保存失败"); return; }
             prefs.edit().putBoolean("ipapi", ipapi.isChecked()).putBoolean("proxy", proxy.isChecked())
                     .putBoolean("geo", geo.isChecked()).putBoolean("rdap", rdap.isChecked()).putBoolean("ripe", ripe.isChecked())
-                    .putBoolean("ping0", ping0.isChecked()).putString("subscription_ua", userAgent.getText().toString().trim())
+                    .putBoolean("ping0", ping0.isChecked()).putBoolean("use_cache", useCache.isChecked()).putString("subscription_ua", userAgent.getText().toString().trim())
                     .remove("ipapi_key").remove("proxy_key").remove("ping0_key").apply();
             alert.dismiss();
         }));
@@ -836,14 +839,18 @@ public final class MainActivity extends Activity {
         to.status = from.status; to.riskScore = from.riskScore; to.riskSource = from.riskSource;
         to.country = from.country; to.countryCode = from.countryCode; to.region = from.region; to.city = from.city; to.asn = from.asn; to.org = from.org;
         to.networkType = from.networkType; to.coordinates = from.coordinates; to.timezone = from.timezone;
-        to.registration = from.registration; to.routing = from.routing; to.freshness = from.freshness;
+        to.registration = from.registration; to.routing = from.routing; to.freshness = from.freshness; to.confidence = from.confidence;
+        to.signalSummary = from.signalSummary;
         to.vpn = from.vpn; to.proxy = from.proxy; to.tor = from.tor; to.datacenter = from.datacenter;
         to.abuser = from.abuser; to.mobile = from.mobile; to.riskEvaluated = from.riskEvaluated;
         to.nativeIp = from.nativeIp; to.successfulSources = from.successfulSources;
+        to.countryAgreement = from.countryAgreement; to.asnAgreement = from.asnAgreement;
         to.startedAt = from.startedAt; to.finishedAt = from.finishedAt; to.origin = origin;
         to.sourceDetails.clear(); to.sourceDetails.addAll(from.sourceDetails);
         to.sourceEvidence.clear(); to.sourceEvidence.addAll(from.sourceEvidence);
         to.errors.clear(); to.errors.addAll(from.errors);
+        to.conflicts.clear(); to.conflicts.addAll(from.conflicts);
+        to.signalEvidence.clear(); to.signalEvidence.addAll(from.signalEvidence);
     }
 
     private boolean networkAvailable() {

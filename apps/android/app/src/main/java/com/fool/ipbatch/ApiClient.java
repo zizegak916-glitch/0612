@@ -16,8 +16,19 @@ import java.util.Date;
 import java.text.SimpleDateFormat;
 import java.util.Locale;
 import java.util.TimeZone;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 public final class ApiClient {
+    private static final ExecutorService PROVIDER_POOL = Executors.newFixedThreadPool(10);
+    private static final Object RDAP_RATE_LOCK = new Object();
+    private static long lastRdapStarted;
     public static final class Settings {
         public boolean ipapi = true;
         public boolean proxyCheck = true;
@@ -29,6 +40,7 @@ public final class ApiClient {
         public String proxyCheckKey = "";
         public String ping0Key = "";
         public int timeoutMs = 12000;
+        public boolean useCache = true;
     }
 
     public IpResult scan(String ip, Settings settings) {
@@ -41,29 +53,60 @@ public final class ApiClient {
             out.finishedAt = System.currentTimeMillis();
             return out;
         }
-        if (settings.ipapi) call("ipapi.is", out, new Request() {
-            @Override public void run() throws Exception { queryIpApi(ip, out, settings); }
+        List<Future<IpResult>> futures = new ArrayList<>();
+        List<String> sourceOrder = new ArrayList<>();
+        if (settings.ipapi) add(futures, sourceOrder, "ipapi.is", ip, new PartialRequest() {
+            @Override public void run(IpResult partial) throws Exception { queryIpApi(ip, partial, settings); }
         });
-        if (settings.proxyCheck) call("proxycheck.io", out, new Request() {
-            @Override public void run() throws Exception { queryProxyCheck(ip, out, settings); }
+        if (settings.proxyCheck) add(futures, sourceOrder, "proxycheck.io", ip, new PartialRequest() {
+            @Override public void run(IpResult partial) throws Exception { queryProxyCheck(ip, partial, settings); }
         });
-        if (settings.geoJs) call("GeoJS", out, new Request() {
-            @Override public void run() throws Exception { queryGeoJs(ip, out, settings.timeoutMs); }
+        if (settings.geoJs) add(futures, sourceOrder, "GeoJS", ip, new PartialRequest() {
+            @Override public void run(IpResult partial) throws Exception { queryGeoJs(ip, partial, settings.timeoutMs); }
         });
-        if (settings.rdap) call("RDAP", out, new Request() {
-            @Override public void run() throws Exception { queryRdap(ip, out, settings.timeoutMs); }
+        if (settings.rdap) add(futures, sourceOrder, "RDAP", ip, new PartialRequest() {
+            @Override public void run(IpResult partial) throws Exception { queryRdap(ip, partial, settings.timeoutMs); }
         });
-        if (settings.ripeStat) call("RIPEstat", out, new Request() {
-            @Override public void run() throws Exception { queryRipeStat(ip, out, settings.timeoutMs); }
+        if (settings.ripeStat) add(futures, sourceOrder, "RIPEstat", ip, new PartialRequest() {
+            @Override public void run(IpResult partial) throws Exception { queryRipeStat(ip, partial, settings.timeoutMs); }
         });
-        if (settings.ping0 && !settings.ping0Key.trim().isEmpty()) call("Ping0", out, new Request() {
-            @Override public void run() throws Exception { queryPing0(ip, out, settings); }
+        if (settings.ping0 && !settings.ping0Key.trim().isEmpty()) add(futures, sourceOrder, "Ping0", ip, new PartialRequest() {
+            @Override public void run(IpResult partial) throws Exception { queryPing0(ip, partial, settings); }
         });
+        List<IpResult> partials = new ArrayList<>();
+        for (int index = 0; index < futures.size(); index++) {
+            try {
+                IpResult partial = futures.get(index).get();
+                partials.add(partial);
+                out.mergeFrom(partial, sourceOrder.get(index));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                out.errors.add(sourceOrder.get(index) + "：任务已中断");
+            } catch (Exception failure) {
+                out.errors.add(sourceOrder.get(index) + "：" + safeMessage(failure));
+            }
+        }
+        applyConsensus(out, partials);
         out.finish();
         return out;
     }
 
     private interface Request { void run() throws Exception; }
+    private interface PartialRequest { void run(IpResult partial) throws Exception; }
+
+    private void add(List<Future<IpResult>> futures, List<String> sources, final String source,
+                     final String ip, final PartialRequest request) {
+        sources.add(source);
+        futures.add(PROVIDER_POOL.submit(new Callable<IpResult>() {
+            @Override public IpResult call() {
+                final IpResult partial = new IpResult(ip);
+                ApiClient.this.call(source, partial, new Request() {
+                    @Override public void run() throws Exception { request.run(partial); }
+                });
+                return partial;
+            }
+        }));
+    }
 
     private void call(String source, IpResult out, Request request) {
         long begin = System.currentTimeMillis();
@@ -119,6 +162,10 @@ public final class ApiClient {
         boolean hasSecurity = root.has("is_vpn") || root.has("is_proxy") || root.has("is_tor")
                 || root.has("is_datacenter") || root.has("is_abuser");
         out.riskEvaluated |= hasSecurity;
+        for (String flag : new String[]{"proxy", "vpn", "tor", "datacenter", "abuser"}) {
+            String key = "is_" + flag;
+            if (root.has(key)) out.signalEvidence.add("ipapi.is|" + flag + "=" + root.optBoolean(key));
+        }
         out.sourceDetails.add(hasSecurity
                 ? "ipapi.is：归属/类型/匿名与滥用标记"
                 : "ipapi.is：免费层归属与 ASN（高级风险字段未返回）");
@@ -126,7 +173,7 @@ public final class ApiClient {
 
     private void queryProxyCheck(String ip, IpResult out, Settings settings) throws Exception {
         StringBuilder url = new StringBuilder("https://proxycheck.io/v2/").append(enc(ip))
-                .append("?vpn=1&asn=1&risk=1");
+                .append("?vpn=1&asn=1&risk=1&seen=1");
         if (!settings.proxyCheckKey.trim().isEmpty()) url.append("&key=").append(enc(settings.proxyCheckKey.trim()));
         JSONObject root = new JSONObject(get(url.toString(), settings.timeoutMs));
         if (!"ok".equalsIgnoreCase(root.optString("status"))) {
@@ -140,6 +187,9 @@ public final class ApiClient {
         out.proxy |= yes(proxy);
         out.vpn |= type.toLowerCase().contains("vpn");
         out.tor |= type.toLowerCase().contains("tor");
+        out.signalEvidence.add("proxycheck.io|proxy=" + yes(proxy));
+        out.signalEvidence.add("proxycheck.io|vpn=" + type.toLowerCase().contains("vpn"));
+        out.signalEvidence.add("proxycheck.io|tor=" + type.toLowerCase().contains("tor"));
         if (data.has("risk")) out.acceptRisk(toInt(data.opt("risk"), 0), "proxycheck.io");
         fill(out, data.optString("country"), data.optString("region"), data.optString("city"));
         setCountryCode(out, first(data.optString("isocode"), data.optString("country_code")));
@@ -167,6 +217,7 @@ public final class ApiClient {
     }
 
     private void queryRdap(String ip, IpResult out, int timeout) throws Exception {
+        throttleRdap();
         JSONObject root = new JSONObject(getRedirecting("https://rdap.org/ip/" + enc(ip), timeout, 4));
         String start = clean(root.optString("startAddress"));
         String end = clean(root.optString("endAddress"));
@@ -236,6 +287,8 @@ public final class ApiClient {
         append(detail, "更宽/更细前缀", (less == null ? 0 : less.length()) + "/" + (more == null ? 0 : more.length()));
         append(detail, "RPKI", rpki);
         out.routing = detail.toString();
+        if (!origin.isEmpty()) setIfEmpty(out, "asn", "AS" + origin);
+        if (!holder.isEmpty()) setIfEmpty(out, "org", holder);
         if (!lastTime.isEmpty()) out.freshness = addFreshness(out.freshness, "RIPE RIS 最后观测 " + lastTime);
         out.sourceDetails.add("RIPEstat 路由：" + out.routing);
     }
@@ -250,6 +303,7 @@ public final class ApiClient {
         setIfEmpty(out, "org", first(root.optString("org"), root.optString("asnname")));
         setIfEmpty(out, "networkType", first(root.optString("orgtype"), root.optString("asntype")));
         out.datacenter |= root.optBoolean("isidc");
+        if (root.has("isidc")) out.signalEvidence.add("Ping0|datacenter=" + root.optBoolean("isidc"));
         out.riskEvaluated = true;
         if (root.has("iprisk")) out.acceptRisk(toInt(root.opt("iprisk"), 0), "Ping0");
         if (root.has("isnative")) out.nativeIp = root.optBoolean("isnative");
@@ -265,7 +319,7 @@ public final class ApiClient {
             connection.setInstanceFollowRedirects(false);
             connection.setUseCaches(false);
             connection.setRequestProperty("Accept", "application/json");
-            connection.setRequestProperty("User-Agent", "IPBatchInspector/3.0 Android");
+            connection.setRequestProperty("User-Agent", "IPBatchInspector/4.1 Android");
             int code = connection.getResponseCode();
             InputStream input = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
             String body = read(input);
@@ -291,7 +345,7 @@ public final class ApiClient {
                 connection.setInstanceFollowRedirects(false);
                 connection.setUseCaches(false);
                 connection.setRequestProperty("Accept", "application/rdap+json, application/json");
-                connection.setRequestProperty("User-Agent", "IPBatchInspector/3.0 Android");
+                connection.setRequestProperty("User-Agent", "IPBatchInspector/4.1 Android");
                 int code = connection.getResponseCode();
                 if (code >= 300 && code < 400) {
                     String location = connection.getHeaderField("Location");
@@ -501,5 +555,60 @@ public final class ApiClient {
         if (message.length() > 100) message = message.substring(0, 100);
         return message.replaceAll("apikey\\([^)]*\\)", "apikey(***)")
                 .replaceAll("key=[^&\\s]+", "key=***");
+    }
+
+    private void throttleRdap() throws InterruptedException {
+        synchronized (RDAP_RATE_LOCK) {
+            long wait = 1050L - (System.currentTimeMillis() - lastRdapStarted);
+            if (wait > 0) Thread.sleep(wait);
+            lastRdapStarted = System.currentTimeMillis();
+        }
+    }
+
+    private void applyConsensus(IpResult out, List<IpResult> values) {
+        out.countryCode = consensus(values, "countryCode", out.countryCode);
+        out.country = consensus(values, "country", out.country);
+        out.region = consensus(values, "region", out.region);
+        out.city = consensus(values, "city", out.city);
+        out.asn = consensus(values, "asn", out.asn);
+        out.org = consensus(values, "org", out.org);
+        out.countryAgreement = agreement(values, "countryCode", out.countryCode);
+        out.asnAgreement = agreement(values, "asn", out.asn);
+    }
+
+    private String consensus(List<IpResult> values, String field, String fallback) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        Map<String, String> displays = new LinkedHashMap<>();
+        for (IpResult value : values) {
+            String display;
+            if ("countryCode".equals(field)) display = value.countryCode;
+            else if ("country".equals(field)) display = value.country;
+            else if ("region".equals(field)) display = value.region;
+            else if ("city".equals(field)) display = value.city;
+            else if ("asn".equals(field)) display = value.asn;
+            else display = value.org;
+            display = clean(display);
+            if (display.isEmpty()) continue;
+            String key = ("countryCode".equals(field) || "asn".equals(field))
+                    ? display.toUpperCase(Locale.ROOT) : display.toLowerCase(Locale.ROOT);
+            counts.put(key, counts.containsKey(key) ? counts.get(key) + 1 : 1);
+            if (!displays.containsKey(key)) displays.put(key, display);
+        }
+        int bestCount = 0;
+        String best = fallback;
+        for (String key : counts.keySet()) {
+            int count = counts.get(key);
+            if (count > bestCount) { bestCount = count; best = displays.get(key); }
+        }
+        return best;
+    }
+
+    private int agreement(List<IpResult> values, String field, String selected) {
+        int count = 0;
+        for (IpResult value : values) {
+            String candidate = "countryCode".equals(field) ? value.countryCode : value.asn;
+            if (!clean(selected).isEmpty() && clean(selected).equalsIgnoreCase(clean(candidate))) count++;
+        }
+        return count;
     }
 }

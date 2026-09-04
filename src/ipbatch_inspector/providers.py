@@ -8,16 +8,21 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from threading import Lock, Semaphore
 from typing import Any, Callable
 
+from .cache import EvidenceCache, SOURCE_TTLS
 from .iptools import is_public_ip
 from .models import IntelResult, SourceEvidence
 
 
 DEFAULT_SOURCES = ("ipapi", "proxycheck", "geojs", "rdap", "ripestat")
-USER_AGENT = "IPBatchInspector/4.0 (+https://github.com/zizegak916-glitch/0612)"
+USER_AGENT = "IPBatchInspector/4.1 (+https://github.com/zizegak916-glitch/0612)"
 MAX_RESPONSE = 2 * 1024 * 1024
+SOURCE_CONCURRENCY = {"ipapi": 4, "proxycheck": 4, "geojs": 8, "rdap": 1, "ripestat": 8, "ping0": 4}
+SOURCE_INTERVALS = {"rdap": 1.05}
 
 
 def _utc_now() -> str:
@@ -27,12 +32,31 @@ def _utc_now() -> str:
 def _fetch_json(url: str, timeout: float = 12.0, headers: dict[str, str] | None = None) -> Any:
     request_headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
     request_headers.update(headers or {})
-    request = urllib.request.Request(url, headers=request_headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read(MAX_RESPONSE + 1)
-        if len(body) > MAX_RESPONSE:
-            raise ValueError("response exceeded 2 MiB")
-        return json.loads(body.decode("utf-8"))
+    last_error: BaseException | None = None
+    for attempt in range(2):
+        request = urllib.request.Request(url, headers=request_headers)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                body = response.read(MAX_RESPONSE + 1)
+                if len(body) > MAX_RESPONSE:
+                    raise ValueError("response exceeded 2 MiB")
+                return json.loads(body.decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if attempt or exc.code not in {429, 500, 502, 503, 504}:
+                raise
+            retry_after = exc.headers.get("Retry-After", "")
+            try:
+                delay = min(2.0, max(0.2, float(retry_after)))
+            except ValueError:
+                delay = 0.35
+            time.sleep(delay)
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            last_error = exc
+            if attempt:
+                raise
+            time.sleep(0.25)
+    raise last_error or RuntimeError("request failed")
 
 
 def _error_text(exc: BaseException) -> str:
@@ -80,7 +104,7 @@ def _ipapi(ip: str, timeout: float) -> dict[str, Any]:
 
 
 def _proxycheck(ip: str, timeout: float) -> dict[str, Any]:
-    query = {"vpn": "1", "asn": "1", "risk": "1"}
+    query = {"vpn": "1", "asn": "1", "risk": "1", "seen": "1"}
     if os.environ.get("PROXYCHECK_KEY"):
         query["key"] = os.environ["PROXYCHECK_KEY"]
     root = _fetch_json(f"https://proxycheck.io/v2/{urllib.parse.quote(ip, safe='')}?" + urllib.parse.urlencode(query), timeout)
@@ -212,6 +236,30 @@ PROVIDERS: dict[str, Callable[[str, float], dict[str, Any]]] = {
 }
 
 
+class _ProviderGate:
+    def __init__(self) -> None:
+        self.semaphores = {name: Semaphore(limit) for name, limit in SOURCE_CONCURRENCY.items()}
+        self.interval_locks = {name: Lock() for name in SOURCE_INTERVALS}
+        self.last_started = {name: 0.0 for name in SOURCE_INTERVALS}
+
+    def call(self, source: str, function: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        semaphore = self.semaphores.get(source)
+        if semaphore is None:
+            return function()
+        with semaphore:
+            interval = SOURCE_INTERVALS.get(source)
+            if interval:
+                with self.interval_locks[source]:
+                    delay = interval - (time.monotonic() - self.last_started[source])
+                    if delay > 0:
+                        time.sleep(delay)
+                    self.last_started[source] = time.monotonic()
+            return function()
+
+
+_GATE = _ProviderGate()
+
+
 def _format_asn(value: object) -> str:
     text = str(value or "").strip()
     if not text:
@@ -222,47 +270,193 @@ def _format_asn(value: object) -> str:
 
 def _merge(result: IntelResult, evidence: SourceEvidence) -> None:
     result.evidence.append(evidence)
-    if not evidence.ok:
+
+
+def _normal_value(field: str, value: object) -> str:
+    text = " ".join(str(value or "").strip().split())
+    if field == "country_code":
+        return text.upper()
+    if field == "asn":
+        return _format_asn(text).upper()
+    return text.casefold()
+
+
+def _select_consensus(
+    result: IntelResult,
+    field: str,
+    source_priority: tuple[str, ...],
+    *,
+    aliases: tuple[str, ...] = (),
+) -> str:
+    observations: list[tuple[str, str, str]] = []
+    keys = (field,) + aliases
+    for evidence in result.evidence:
+        if not evidence.ok:
+            continue
+        value = next((evidence.fields.get(key) for key in keys if evidence.fields.get(key) not in (None, "")), None)
+        if value is None:
+            continue
+        display = _format_asn(value) if field == "asn" else str(value).strip()
+        observations.append((evidence.source, _normal_value(field, display), display))
+    if not observations:
+        return ""
+    counts = Counter(normal for _, normal, _ in observations)
+    highest = max(counts.values())
+    candidates = {value for value, count in counts.items() if count == highest}
+    chosen_normal = ""
+    for source in source_priority:
+        match = next((normal for observed_source, normal, _ in observations if observed_source == source and normal in candidates), None)
+        if match:
+            chosen_normal = match
+            break
+    if not chosen_normal:
+        chosen_normal = sorted(candidates)[0]
+    chosen_display = next(display for _, normal, display in observations if normal == chosen_normal)
+    values: dict[str, list[str]] = defaultdict(list)
+    displays: dict[str, str] = {}
+    for source, normal, display in observations:
+        values[normal].append(source)
+        displays.setdefault(normal, display)
+    result.consensus[field] = {
+        "value": chosen_display,
+        "agree": counts[chosen_normal],
+        "observed": len(observations),
+        "sources": [source for source, normal, _ in observations if normal == chosen_normal],
+    }
+    if len(values) > 1:
+        result.conflicts.append(
+            {"field": field, "values": {displays[value]: sources for value, sources in values.items()}}
+        )
+    return chosen_display
+
+
+def _finalize(result: IntelResult) -> None:
+    provider_evidence = [e for e in result.evidence if e.source != "local-rule"]
+    successful = [e for e in provider_evidence if e.ok]
+    if not successful:
+        result.status = "failed"
+        result.confidence = {
+            "level": "none",
+            "successful_sources": 0,
+            "failed_sources": len(provider_evidence),
+            "successful_source_names": [],
+            "failed_source_names": [e.source for e in provider_evidence],
+            "cached_sources": 0,
+            "reason": "no provider returned usable evidence",
+        }
         return
-    fields = evidence.fields
-    for attr, key in (
-        ("country", "country"),
-        ("country_code", "country_code"),
-        ("region", "region"),
-        ("city", "city"),
-        ("organization", "organization"),
-        ("network_type", "network_type"),
-        ("prefix", "prefix"),
-        ("rpki", "rpki"),
-    ):
-        if not getattr(result, attr) and fields.get(key) not in (None, ""):
-            setattr(result, attr, str(fields[key]))
-    if not result.asn:
-        result.asn = _format_asn(fields.get("asn") or fields.get("origin_asn"))
+
+    geo_priority = ("ipapi", "geojs", "proxycheck", "ping0")
+    result.country_code = _select_consensus(result, "country_code", geo_priority)
+    result.country = _select_consensus(result, "country", geo_priority)
+    result.region = _select_consensus(result, "region", geo_priority)
+    result.city = _select_consensus(result, "city", geo_priority)
+    result.asn = _select_consensus(result, "asn", ("ripestat", "ipapi", "geojs", "proxycheck", "ping0"), aliases=("origin_asn",))
+    result.organization = _select_consensus(result, "organization", ("ipapi", "geojs", "proxycheck", "ping0"))
+    result.network_type = _select_consensus(result, "network_type", ("ipapi", "proxycheck", "ping0"))
+    result.prefix = _select_consensus(result, "prefix", ("ripestat",))
+    result.rpki = _select_consensus(result, "rpki", ("ripestat",))
+
     for flag in ("proxy", "vpn", "tor", "datacenter", "abuser"):
-        setattr(result, flag, getattr(result, flag) or bool(fields.get(flag, False)))
-    if fields.get("risk") is not None:
-        try:
-            result.risk_scores[evidence.source] = max(0, min(100, int(fields["risk"])))
-        except (TypeError, ValueError):
-            pass
+        positives = [e.source for e in successful if flag in e.fields and bool(e.fields[flag])]
+        negatives = [e.source for e in successful if flag in e.fields and not bool(e.fields[flag])]
+        unknown = [e.source for e in provider_evidence if not e.ok or flag not in e.fields]
+        if positives and negatives:
+            state = "disputed"
+        elif len(positives) >= 2 or (flag == "tor" and positives):
+            state = "confirmed"
+        elif positives:
+            state = "reported"
+        elif negatives:
+            state = "not_reported"
+        else:
+            state = "unknown"
+        result.signals[flag] = {
+            "state": state,
+            "positive_sources": positives,
+            "negative_sources": negatives,
+            "unknown_sources": unknown,
+        }
+        setattr(result, flag, bool(positives))
+        if positives and negatives:
+            result.conflicts.append({"field": flag, "values": {"true": positives, "false": negatives}})
+
+    for evidence in successful:
+        if evidence.fields.get("risk") is not None:
+            try:
+                result.risk_scores[evidence.source] = max(0, min(100, int(evidence.fields["risk"])))
+            except (TypeError, ValueError):
+                pass
+
+    important_conflicts = {item["field"] for item in result.conflicts} & {"country_code", "asn"}
+    country_vote = result.consensus.get("country_code", {})
+    asn_vote = result.consensus.get("asn", {})
+    key_fields_confirmed = country_vote.get("agree", 0) >= 2 and asn_vote.get("agree", 0) >= 2
+    if len(successful) >= 3 and not important_conflicts and key_fields_confirmed:
+        level, reason = "high", "at least three successful sources; country and ASN each agree across two or more sources"
+    elif len(successful) >= 2:
+        level, reason = "medium", "multiple sources returned evidence, but key-field agreement is incomplete or conflicts need review"
+    else:
+        level, reason = "low", "only one source returned usable evidence"
+    result.status = "ok" if len(successful) >= 2 else "partial"
+    result.confidence = {
+        "level": level,
+        "successful_sources": len(successful),
+        "failed_sources": sum(1 for e in result.evidence if not e.ok),
+        "successful_source_names": [e.source for e in successful],
+        "failed_source_names": [e.source for e in provider_evidence if not e.ok],
+        "cached_sources": sum(1 for e in successful if e.cache_hit),
+        "reason": reason,
+    }
 
 
-def scan_ip(ip: str, sources: tuple[str, ...] = DEFAULT_SOURCES, timeout: float = 12.0) -> IntelResult:
+def _query_source(
+    ip: str,
+    source: str,
+    timeout: float,
+    cache: EvidenceCache,
+    fresh: bool,
+    cache_ttl: int | None,
+) -> SourceEvidence:
+    provider = PROVIDERS.get(source)
+    if provider is None:
+        return SourceEvidence(source, _utc_now(), 0, False, error="unknown source")
+    key_name = {"ipapi": "IPAPI_KEY", "proxycheck": "PROXYCHECK_KEY", "ping0": "PING0_KEY"}.get(source)
+    variant = "keyed" if key_name and os.environ.get(key_name, "").strip() else "anonymous"
+    cached = None if fresh else cache.get(source, ip, cache_ttl, variant=variant)
+    if cached:
+        return cached
+    evidence = _source(source, lambda: _GATE.call(source, lambda: provider(ip, timeout)))
+    evidence.ttl_seconds = SOURCE_TTLS.get(source, 3600) if cache_ttl is None else max(0, cache_ttl)
+    cache.put(ip, evidence, variant=variant)
+    return evidence
+
+
+def scan_ip(
+    ip: str,
+    sources: tuple[str, ...] = DEFAULT_SOURCES,
+    timeout: float = 12.0,
+    *,
+    fresh: bool = False,
+    cache_ttl: int | None = None,
+) -> IntelResult:
     normalized = ipaddress.ip_address(ip).compressed
     result = IntelResult(normalized)
     if not is_public_ip(normalized):
         result.status = "local/reserved"
         result.evidence.append(SourceEvidence("local-rule", _utc_now(), 0, True, {"sent_to_providers": False}))
+        result.confidence = {"level": "local-rule", "successful_sources": 0, "reason": "non-public address rejected locally"}
         return result
-    for source in sources:
-        provider = PROVIDERS.get(source)
-        if provider is None:
-            result.evidence.append(SourceEvidence(source, _utc_now(), 0, False, error="unknown source"))
-            continue
-        _merge(result, _source(source, lambda p=provider: p(normalized, timeout)))
-    successes = sum(1 for evidence in result.evidence if evidence.ok)
-    result.status = "ok" if successes else "failed"
+    cache = EvidenceCache()
+    with ThreadPoolExecutor(max_workers=max(1, min(len(sources), 8))) as pool:
+        futures = {
+            source: pool.submit(_query_source, normalized, source, timeout, cache, fresh, cache_ttl)
+            for source in sources
+        }
+        for source in sources:
+            _merge(result, futures[source].result())
+    cache.save()
+    _finalize(result)
     return result
 
 
@@ -271,13 +465,42 @@ def scan_many(
     sources: tuple[str, ...] = DEFAULT_SOURCES,
     timeout: float = 12.0,
     workers: int = 4,
+    *,
+    fresh: bool = False,
+    cache_ttl: int | None = None,
 ) -> list[IntelResult]:
-    ordered: list[IntelResult | None] = [None] * len(ips)
-    with ThreadPoolExecutor(max_workers=max(1, min(workers, 16))) as pool:
-        futures = {pool.submit(scan_ip, ip, sources, timeout): index for index, ip in enumerate(ips)}
+    ordered: list[IntelResult] = []
+    public_indexes: list[int] = []
+    for index, ip in enumerate(ips):
+        normalized = ipaddress.ip_address(ip).compressed
+        result = IntelResult(normalized)
+        ordered.append(result)
+        if is_public_ip(normalized):
+            public_indexes.append(index)
+        else:
+            result.status = "local/reserved"
+            result.evidence.append(SourceEvidence("local-rule", _utc_now(), 0, True, {"sent_to_providers": False}))
+            result.confidence = {"level": "local-rule", "successful_sources": 0, "reason": "non-public address rejected locally"}
+
+    cache = EvidenceCache()
+    worker_count = max(1, min(64, max(workers, 1) * max(1, min(len(sources), 5))))
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        futures = {}
+        for index in public_indexes:
+            for source_index, source in enumerate(sources):
+                future = pool.submit(_query_source, ordered[index].ip, source, timeout, cache, fresh, cache_ttl)
+                futures[future] = (index, source_index)
+        evidence_by_result: dict[int, dict[int, SourceEvidence]] = defaultdict(dict)
         for future in as_completed(futures):
-            ordered[futures[future]] = future.result()
-    return [item for item in ordered if item is not None]
+            index, source_index = futures[future]
+            evidence_by_result[index][source_index] = future.result()
+
+    for index in public_indexes:
+        for source_index in range(len(sources)):
+            _merge(ordered[index], evidence_by_result[index][source_index])
+        _finalize(ordered[index])
+    cache.save()
+    return ordered
 
 
 def detect_exit_ips(timeout: float = 8.0) -> dict[str, Any]:

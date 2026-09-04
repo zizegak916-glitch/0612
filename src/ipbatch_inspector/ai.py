@@ -4,12 +4,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
 
 POLICY_SNAPSHOT = "2026-09-02"
-USER_AGENT = "Mozilla/5.0 IPBatchInspector/4.0"
+USER_AGENT = "Mozilla/5.0 IPBatchInspector/4.1"
 
 ENDPOINTS = (
     ("ChatGPT web", "web", "https://chatgpt.com/"),
@@ -55,24 +56,27 @@ def _classify(code: int, body: str, kind: str) -> tuple[str, str]:
 
 def test_ai_entrances(timeout: float = 10.0) -> list[dict[str, Any]]:
     """Use the current system route; send no cookie, account, key, or prompt."""
-    results: list[dict[str, Any]] = []
-    opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
-    for name, kind, url in ENDPOINTS:
+    def check(endpoint: tuple[str, str, str]) -> dict[str, Any]:
+        name, kind, url = endpoint
         start = time.monotonic()
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/json"})
+        opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
         try:
             with opener.open(request, timeout=timeout) as response:
                 code = response.status
                 body = response.read(32768).decode("utf-8", errors="replace")
             status, detail = _classify(code, body, kind)
-            results.append({"name": name, "kind": kind, "host": urllib.parse.urlparse(url).hostname, "http_code": code, "status": status, "detail": detail, "checked_at": _now(), "elapsed_ms": round((time.monotonic() - start) * 1000)})
+            return {"name": name, "kind": kind, "host": urllib.parse.urlparse(url).hostname, "http_code": code, "status": status, "detail": detail, "checked_at": _now(), "elapsed_ms": round((time.monotonic() - start) * 1000)}
         except urllib.error.HTTPError as exc:
             body = exc.read(32768).decode("utf-8", errors="replace")
             status, detail = _classify(exc.code, body, kind)
-            results.append({"name": name, "kind": kind, "host": exc.url.split("/", 3)[2], "http_code": exc.code, "status": status, "detail": detail, "checked_at": _now(), "elapsed_ms": round((time.monotonic() - start) * 1000)})
+            return {"name": name, "kind": kind, "host": exc.url.split("/", 3)[2], "http_code": exc.code, "status": status, "detail": detail, "checked_at": _now(), "elapsed_ms": round((time.monotonic() - start) * 1000)}
         except Exception as exc:
-            results.append({"name": name, "kind": kind, "host": url.split("/", 3)[2], "http_code": None, "status": "network-error", "detail": str(exc)[:240], "checked_at": _now(), "elapsed_ms": round((time.monotonic() - start) * 1000)})
-    return results
+            return {"name": name, "kind": kind, "host": url.split("/", 3)[2], "http_code": None, "status": "network-error", "detail": str(exc)[:240], "checked_at": _now(), "elapsed_ms": round((time.monotonic() - start) * 1000)}
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(check, endpoint) for endpoint in ENDPOINTS]
+        return [future.result() for future in futures]
 
 
 def infer_ai_policy(country_code: str, *, proxy: bool = False, vpn: bool = False, tor: bool = False, datacenter: bool = False, risk_scores: dict[str, int] | None = None) -> dict[str, str]:

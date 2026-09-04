@@ -7,6 +7,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /** Resolves node host names to addresses. It performs DNS only and never connects to node ports. */
 public final class SubscriptionResolver {
@@ -37,6 +41,19 @@ public final class SubscriptionResolver {
         Report report = new Report();
         Set<String> unique = new LinkedHashSet<>();
         Map<String, Integer> perHost = new LinkedHashMap<>();
+        Map<String, Future<DnsAnswer>> lookups = new LinkedHashMap<>();
+        ExecutorService dnsPool = Executors.newFixedThreadPool(24);
+        for (SubscriptionParser.NodeEndpoint node : nodes) {
+            if (IpParser.normalize(node.host) != null || lookups.containsKey(node.host)) continue;
+            final String host = node.host;
+            lookups.put(host, dnsPool.submit(new Callable<DnsAnswer>() {
+                @Override public DnsAnswer call() {
+                    try { return new DnsAnswer(InetAddress.getAllByName(host), null); }
+                    catch (Exception e) { return new DnsAnswer(new InetAddress[0], safe(e)); }
+                }
+            }));
+        }
+        dnsPool.shutdown();
         for (SubscriptionParser.NodeEndpoint node : nodes) {
             if (report.truncated) break;
             String literal = IpParser.normalize(node.host);
@@ -53,7 +70,9 @@ public final class SubscriptionResolver {
             }
             perHost.put(node.host, 1);
             try {
-                InetAddress[] addresses = InetAddress.getAllByName(node.host);
+                DnsAnswer answer = lookups.get(node.host).get();
+                if (answer.error != null) throw new Exception(answer.error);
+                InetAddress[] addresses = answer.addresses;
                 if (addresses.length == 0) throw new Exception("没有 DNS 结果");
                 for (InetAddress address : addresses) {
                     String normalized = IpParser.normalize(address.getHostAddress());
@@ -102,5 +121,11 @@ public final class SubscriptionResolver {
         String message = e.getMessage();
         if (message == null || message.trim().isEmpty()) return e.getClass().getSimpleName();
         return message.length() > 80 ? message.substring(0, 80) : message;
+    }
+
+    private static final class DnsAnswer {
+        final InetAddress[] addresses;
+        final String error;
+        DnsAnswer(InetAddress[] addresses, String error) { this.addresses = addresses; this.error = error; }
     }
 }

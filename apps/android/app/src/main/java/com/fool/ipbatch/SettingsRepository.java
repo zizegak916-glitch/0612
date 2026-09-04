@@ -16,6 +16,7 @@ public final class SettingsRepository {
         settings.rdap = prefs.getBoolean("rdap", true);
         settings.ripeStat = prefs.getBoolean("ripe", true);
         settings.ping0 = prefs.getBoolean("ping0", false);
+        settings.useCache = prefs.getBoolean("use_cache", true);
         settings.ipapiKey = value(secrets, prefs, "ipapi_key");
         settings.proxyCheckKey = value(secrets, prefs, "proxy_key");
         settings.ping0Key = value(secrets, prefs, "ping0_key");

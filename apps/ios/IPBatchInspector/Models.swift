@@ -1,6 +1,6 @@
 import Foundation
 
-struct NodeEndpoint: Codable, Hashable {
+struct NodeEndpoint: Codable, Hashable, Sendable {
     let protocolName: String
     let name: String
     let host: String
@@ -13,7 +13,7 @@ struct NodeEndpoint: Codable, Hashable {
     }
 }
 
-struct EntranceResult: Codable, Identifiable {
+struct EntranceResult: Codable, Identifiable, Sendable {
     var id: String { name }
     let name: String
     let kind: String
@@ -24,7 +24,7 @@ struct EntranceResult: Codable, Identifiable {
     let checkedAt: String
 }
 
-struct SourceEvidence: Codable {
+struct SourceEvidence: Codable, Sendable {
     let source: String
     let ok: Bool
     let elapsedMilliseconds: Int
@@ -33,7 +33,7 @@ struct SourceEvidence: Codable {
     let error: String?
 }
 
-struct IPResult: Codable, Identifiable {
+struct IPResult: Codable, Identifiable, Sendable {
     var id: String { ip }
     let ip: String
     var status: String
@@ -41,6 +41,11 @@ struct IPResult: Codable, Identifiable {
     var countryCode: String = ""
     var asn: String = ""
     var organization: String = ""
+    var riskScores: [String: Int] = [:]
+    var signals: [String: String] = [:]
+    var consensus: [String: String] = [:]
+    var conflicts: [String] = []
+    var confidence = "none"
     var evidence: [SourceEvidence] = []
     var conclusionBoundary = "Third-party evidence only; accuracy and future platform acceptance are not guaranteed."
 }

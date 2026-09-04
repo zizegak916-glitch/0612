@@ -23,6 +23,7 @@ class InspectorApp(tk.Tk):
         self.status = tk.StringVar(value="Ready — subscription nodes are never connected")
         self.allow_private = tk.BooleanVar(value=False)
         self.resolve_only = tk.BooleanVar(value=False)
+        self.fresh = tk.BooleanVar(value=False)
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -64,7 +65,10 @@ class InspectorApp(tk.Tk):
         self.ip_input = tk.Text(self.ip_tab, height=6, font=("TkFixedFont", 10))
         self.ip_input.pack(fill="x", pady=6)
         self.ip_input.insert("1.0", "1.1.1.1\n8.8.8.8")
-        ttk.Button(self.ip_tab, text="Run intelligence scan", command=self._run_ips).pack(anchor="w")
+        ip_controls = ttk.Frame(self.ip_tab)
+        ip_controls.pack(fill="x")
+        ttk.Button(ip_controls, text="Run intelligence scan", command=self._run_ips).pack(side="left")
+        ttk.Checkbutton(ip_controls, text="Force refresh (bypass cache)", variable=self.fresh).pack(side="left", padx=16)
         self.ip_output = self._output(self.ip_tab)
         self.ip_output.pack(fill="both", expand=True, pady=(8, 0))
 
@@ -76,6 +80,7 @@ class InspectorApp(tk.Tk):
         controls.pack(fill="x")
         ttk.Checkbutton(controls, text="Allow local/private subscription retrieval", variable=self.allow_private).pack(side="left")
         ttk.Checkbutton(controls, text="DNS only, skip public intelligence", variable=self.resolve_only).pack(side="left", padx=16)
+        ttk.Checkbutton(controls, text="Force refresh", variable=self.fresh).pack(side="left")
         ttk.Button(controls, text="Inspect without connecting nodes", command=self._run_subscription).pack(side="right")
         ttk.Button(controls, text="Save URL securely", command=self._save_current).pack(side="right", padx=8)
         ttk.Label(self.subscription_tab, text="Raw content is held only in memory; results redact credentials. Node ports remain metadata.", foreground="#7a3e00").pack(anchor="w", pady=6)
@@ -103,12 +108,13 @@ class InspectorApp(tk.Tk):
 
     def _run_ips(self) -> None:
         ips, warnings = extract_ips([self.ip_input.get("1.0", "end")])
+        fresh = self.fresh.get()
         if not ips:
             messagebox.showerror("No input", "No valid IP address was found.")
             return
 
         def work() -> dict[str, Any]:
-            results = scan_many(ips)
+            results = scan_many(ips, fresh=fresh)
             for item in results:
                 item.ai_policy = infer_ai_policy(item.country_code, proxy=item.proxy, vpn=item.vpn, tor=item.tor, datacenter=item.datacenter, risk_scores=item.risk_scores)
             return {"warnings": warnings, "results": [item.as_dict() for item in results]}
@@ -120,9 +126,17 @@ class InspectorApp(tk.Tk):
         if not url:
             messagebox.showerror("Missing URL", "Enter a subscription URL.")
             return
+        allow_private = self.allow_private.get()
+        resolve_only = self.resolve_only.get()
+        fresh = self.fresh.get()
         self._background(
             "Downloading and parsing subscription…",
-            lambda: inspect_subscription(url, allow_private=self.allow_private.get(), resolve_only=self.resolve_only.get()),
+            lambda: inspect_subscription(
+                url,
+                allow_private=allow_private,
+                resolve_only=resolve_only,
+                fresh=fresh,
+            ),
             self.subscription_output,
         )
 

@@ -63,6 +63,9 @@ class SourceEvidence:
     ok: bool
     fields: dict[str, Any] = field(default_factory=dict)
     error: str = ""
+    cache_hit: bool = False
+    cache_age_seconds: int = 0
+    ttl_seconds: int = 0
 
 
 @dataclass
@@ -84,6 +87,10 @@ class IntelResult:
     datacenter: bool = False
     abuser: bool = False
     risk_scores: dict[str, int] = field(default_factory=dict)
+    signals: dict[str, dict[str, Any]] = field(default_factory=dict)
+    consensus: dict[str, dict[str, Any]] = field(default_factory=dict)
+    conflicts: list[dict[str, Any]] = field(default_factory=list)
+    confidence: dict[str, Any] = field(default_factory=dict)
     evidence: list[SourceEvidence] = field(default_factory=list)
     ai_policy: dict[str, str] = field(default_factory=dict)
 

@@ -1,6 +1,6 @@
 # IPBatchInspector 4
 
-IPBatchInspector 是一套证据优先、跨平台的 IP 批量情报与订阅检查工具。一个仓库同时提供 Android、iOS、Windows、Linux、终端 CLI、Bash/PowerShell 脚本和 Tampermonkey/油猴版。
+IPBatchInspector 是一套证据优先、跨平台的 IP 批量情报与订阅检查工具。一个仓库同时提供 Android、iOS、Windows、Linux、终端 CLI、Bash/PowerShell 脚本和 Tampermonkey/油猴版。4.1 版对同一 IP 的数据源并行查询，并增加分源缓存、多数一致性、字段冲突和风险信号状态。
 
 > 最重要的安全边界：订阅节点只解析、做系统 DNS 解析并查询节点 IP 情报。项目不会连接节点端口，不做 SS/SSR/VMess/VLESS/Trojan/Hysteria/TUIC 握手，不建立 VPN，不修改系统路由，也不把“地区支持”冒充为“节点解锁实测”。
 
@@ -73,8 +73,8 @@ ipbatch-gui
 
 ```text
 ipbatch exit [--json]
-ipbatch scan <IP/CIDR/文本...> [--json|--csv FILE] [--workers N]
-ipbatch subscription <HTTPS_URL> [--allow-private-subscription] [--list-nodes] [--json]
+ipbatch scan <IP/CIDR/文本...> [--json|--csv FILE] [--workers N] [--fresh] [--cache-ttl 秒]
+ipbatch subscription <HTTPS_URL> [--allow-private-subscription] [--list-nodes] [--json] [--fresh]
 ipbatch ai [--json]
 ipbatch formats
 ipbatch monitor --config monitor.example.json [--once]
@@ -85,6 +85,7 @@ ipbatch monitor --config monitor.example.json [--once]
 - `sn://subscription` 会提取其中显式提供的 HTTP(S) 订阅地址；`fsl64`/`fslyaml` 首选格式失败时自动尝试另一格式，URL 查询串逐字保留，不重写 Token。
 - 公网订阅强制 HTTPS。本机/局域网 HTTP 必须显式传入 `--allow-private-subscription`；解析出的私网、保留、CGNAT 或文档地址不会送到公网情报源。
 - 原始订阅内容只在当前进程内存在。CLI 默认不打印原文，保存节点清单时也不输出密码、UUID、Token 或用户信息。
+- `--fresh` 跳过缓存读取并用本次响应刷新缓存；`--cache-ttl` 可覆盖所有数据源 TTL。缓存保存公网 IP 情报，并对失败做 60 秒短期退避，不保存订阅 URL、订阅原文、节点凭据或 API Key。
 
 ### Windows/Linux 后台运行
 
@@ -98,7 +99,11 @@ ipbatch monitor --config monitor.example.json [--once]
 
 ## 情报与真实性
 
-默认源为 ipapi.is、proxycheck.io、GeoJS、RDAP 和 RIPEstat；可通过 `--sources` 选择。每条结果记录查询目标、来源、UTC 时间、耗时、字段和错误。风险分始终保留来源，不把不同供应商的模型平均成伪精确总分。
+默认源为 ipapi.is、proxycheck.io、GeoJS、RDAP 和 RIPEstat；可通过 `--sources` 选择。每条结果记录查询目标、来源、UTC 时间、耗时、缓存命中与年龄、字段和错误。风险分始终保留来源，不把不同供应商的模型平均成伪精确总分。
+
+国家、国家代码、ASN、地区、城市和组织按成功来源投票，`consensus` 保留获胜值、同意数和来源；`conflicts` 保存所有不一致值。代理/VPN/Tor/机房/滥用字段不再用“缺失即否”：`signals` 明确区分多源确认、单源报告、来源矛盾、明确未报和未知。`confidence` 只给可解释的 high/medium/low/none 等级，不给没有校准依据的综合小数分。
+
+默认缓存按字段变化速度区分：RIPEstat 15 分钟，proxycheck/Ping0 30 分钟，ipapi.is 6 小时，GeoJS 24 小时，RDAP 7 天。RDAP.org 路径约每 1.05 秒最多启动一次请求，RIPEstat 全局最多 8 路并发；这是为了遵守公开服务限制并降低批量 429，而不是速度缺陷。详见 [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md)。
 
 工具能够保证的是“请求了谁、何时请求、得到了哪些字段、哪些请求失败”；不能保证第三方数据库绝对正确，也不能保证某个账号、模型或网站一定接受该 IP。城市定位和风险标签通常比 RDAP、BGP/RPKI 更易过期。
 

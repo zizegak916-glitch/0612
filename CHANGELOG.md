@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.1.0
+
+- Query independent providers concurrently with per-provider limits, retries, TTL caches and 60-second failure backoff.
+- Resolve unique subscription hosts once and download proxy-provider documents concurrently.
+- Add majority consensus, explicit field conflicts, source-aware risk-signal states and explainable confidence levels.
+- Parallelize current-exit and public AI entrance checks across native clients and the userscript.
+- Add force-refresh controls to CLI, desktop, Android and Tampermonkey, plus detailed timing/cache evidence.
+
 ## 4.0.0
 
 - Converted the existing project into a multi-platform monorepo.
