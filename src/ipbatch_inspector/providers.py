@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ipaddress
+import html
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -19,9 +21,9 @@ from .models import IntelResult, SourceEvidence
 
 
 DEFAULT_SOURCES = ("ipapi", "proxycheck", "geojs", "rdap", "ripestat")
-USER_AGENT = "IPBatchInspector/4.1 (+https://github.com/zizegak916-glitch/0612)"
+USER_AGENT = "IPBatchInspector/5.0 (+https://github.com/zizegak916-glitch/0612)"
 MAX_RESPONSE = 2 * 1024 * 1024
-SOURCE_CONCURRENCY = {"ipapi": 4, "proxycheck": 4, "geojs": 8, "rdap": 1, "ripestat": 8, "ping0": 4}
+SOURCE_CONCURRENCY = {"ipapi": 4, "proxycheck": 4, "geojs": 8, "rdap": 1, "ripestat": 8, "ping0": 4, "cngeo": 2}
 SOURCE_INTERVALS = {"rdap": 1.05}
 
 
@@ -226,6 +228,41 @@ def _ping0(ip: str, timeout: float) -> dict[str, Any]:
     }
 
 
+def _cngeo(ip: str, timeout: float) -> dict[str, Any]:
+    """Lower-trust mainland-accessible fallback. It is not queried while global geo sources are sufficient."""
+    request = urllib.request.Request(
+        "https://www.cip.cc/" + urllib.parse.quote(ip, safe=""),
+        headers={"Accept": "text/html", "User-Agent": USER_AGENT},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read(512 * 1024 + 1)
+        if len(body) > 512 * 1024:
+            raise ValueError("domestic fallback response exceeded 512 KiB")
+    text = html.unescape(body.decode("utf-8", "replace"))
+    match = re.search(r"<pre[^>]*>(.*?)</pre>", text, re.I | re.S)
+    if not match:
+        raise ValueError("domestic fallback did not contain a result block")
+    plain = re.sub(r"<[^>]+>", "", match.group(1))
+    values: dict[str, str] = {}
+    for line in plain.splitlines():
+        key, separator, value = line.partition(":")
+        if separator:
+            values[key.strip()] = value.strip()
+    returned = values.get("IP", "")
+    if not returned or ipaddress.ip_address(returned) != ipaddress.ip_address(ip):
+        raise ValueError("domestic fallback returned a different target IP")
+    english = values.get("数据三", "").split()
+    fields: dict[str, Any] = {
+        "country": values.get("地址") or (english[0] if english else ""),
+        "organization": values.get("运营商"),
+        "domestic_secondary": values.get("数据二"),
+        "english_location": values.get("数据三"),
+        "trust_tier": "fallback-unverified",
+        "confidence_effect": "cannot raise high confidence by itself",
+    }
+    return {key: value for key, value in fields.items() if value not in (None, "")}
+
+
 PROVIDERS: dict[str, Callable[[str, float], dict[str, Any]]] = {
     "ipapi": _ipapi,
     "proxycheck": _proxycheck,
@@ -233,6 +270,7 @@ PROVIDERS: dict[str, Callable[[str, float], dict[str, Any]]] = {
     "rdap": _rdap,
     "ripestat": _ripestat,
     "ping0": _ping0,
+    "cngeo": _cngeo,
 }
 
 
@@ -346,13 +384,13 @@ def _finalize(result: IntelResult) -> None:
         }
         return
 
-    geo_priority = ("ipapi", "geojs", "proxycheck", "ping0")
+    geo_priority = ("ipapi", "geojs", "proxycheck", "ping0", "cngeo")
     result.country_code = _select_consensus(result, "country_code", geo_priority)
     result.country = _select_consensus(result, "country", geo_priority)
     result.region = _select_consensus(result, "region", geo_priority)
     result.city = _select_consensus(result, "city", geo_priority)
-    result.asn = _select_consensus(result, "asn", ("ripestat", "ipapi", "geojs", "proxycheck", "ping0"), aliases=("origin_asn",))
-    result.organization = _select_consensus(result, "organization", ("ipapi", "geojs", "proxycheck", "ping0"))
+    result.asn = _select_consensus(result, "asn", ("ripestat", "ipapi", "geojs", "proxycheck", "ping0", "cngeo"), aliases=("origin_asn",))
+    result.organization = _select_consensus(result, "organization", ("ipapi", "geojs", "proxycheck", "ping0", "cngeo"))
     result.network_type = _select_consensus(result, "network_type", ("ipapi", "proxycheck", "ping0"))
     result.prefix = _select_consensus(result, "prefix", ("ripestat",))
     result.rpki = _select_consensus(result, "rpki", ("ripestat",))
@@ -392,13 +430,16 @@ def _finalize(result: IntelResult) -> None:
     country_vote = result.consensus.get("country_code", {})
     asn_vote = result.consensus.get("asn", {})
     key_fields_confirmed = country_vote.get("agree", 0) >= 2 and asn_vote.get("agree", 0) >= 2
-    if len(successful) >= 3 and not important_conflicts and key_fields_confirmed:
+    trusted_successful = [e for e in successful if e.source != "cngeo"]
+    if len(trusted_successful) >= 3 and not important_conflicts and key_fields_confirmed:
         level, reason = "high", "at least three successful sources; country and ASN each agree across two or more sources"
-    elif len(successful) >= 2:
+    elif len(trusted_successful) >= 2:
         level, reason = "medium", "multiple sources returned evidence, but key-field agreement is incomplete or conflicts need review"
+    elif len(trusted_successful) == 1:
+        level, reason = "low", "only one trusted source returned usable evidence; the domestic fallback cannot raise confidence"
     else:
-        level, reason = "low", "only one source returned usable evidence"
-    result.status = "ok" if len(successful) >= 2 else "partial"
+        level, reason = "none", "no trusted source returned usable evidence; only lower-trust fallback evidence may be present"
+    result.status = "ok" if len(trusted_successful) >= 2 else "partial" if trusted_successful else "failed"
     result.confidence = {
         "level": level,
         "successful_sources": len(successful),
@@ -439,6 +480,7 @@ def scan_ip(
     *,
     fresh: bool = False,
     cache_ttl: int | None = None,
+    domestic_fallback: bool = True,
 ) -> IntelResult:
     normalized = ipaddress.ip_address(ip).compressed
     result = IntelResult(normalized)
@@ -455,6 +497,10 @@ def scan_ip(
         }
         for source in sources:
             _merge(result, futures[source].result())
+    geo_requested = {"ipapi", "geojs", "proxycheck", "ping0"}.intersection(sources)
+    geo_ok = sum(1 for evidence in result.evidence if evidence.source in geo_requested and evidence.ok)
+    if domestic_fallback and len(geo_requested) >= 2 and geo_ok < 2 and "cngeo" not in sources:
+        _merge(result, _query_source(normalized, "cngeo", timeout, cache, fresh, cache_ttl))
     cache.save()
     _finalize(result)
     return result
@@ -468,6 +514,7 @@ def scan_many(
     *,
     fresh: bool = False,
     cache_ttl: int | None = None,
+    domestic_fallback: bool = True,
 ) -> list[IntelResult]:
     ordered: list[IntelResult] = []
     public_indexes: list[int] = []
@@ -498,6 +545,23 @@ def scan_many(
     for index in public_indexes:
         for source_index in range(len(sources)):
             _merge(ordered[index], evidence_by_result[index][source_index])
+    geo_requested = {"ipapi", "geojs", "proxycheck", "ping0"}.intersection(sources)
+    fallback_indexes = [
+        index for index in public_indexes
+        if domestic_fallback
+        and len(geo_requested) >= 2
+        and "cngeo" not in sources
+        and sum(1 for evidence in ordered[index].evidence if evidence.source in geo_requested and evidence.ok) < 2
+    ]
+    if fallback_indexes:
+        with ThreadPoolExecutor(max_workers=min(2, len(fallback_indexes))) as pool:
+            fallback_futures = {
+                index: pool.submit(_query_source, ordered[index].ip, "cngeo", timeout, cache, fresh, cache_ttl)
+                for index in fallback_indexes
+            }
+            for index in fallback_indexes:
+                _merge(ordered[index], fallback_futures[index].result())
+    for index in public_indexes:
         _finalize(ordered[index])
     cache.save()
     return ordered

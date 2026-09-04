@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from ipbatch_inspector import providers
+from ipbatch_inspector.models import SourceEvidence
 
 
 class ProvidersTest(unittest.TestCase):
@@ -100,6 +101,36 @@ class ProvidersTest(unittest.TestCase):
             result = providers.scan_many(["192.168.1.2"], ("geojs",), fresh=True)[0]
         self.assertEqual(result.status, "local/reserved")
         self.assertFalse(result.evidence[0].fields["sent_to_providers"])
+
+    def test_domestic_fallback_is_automatic_and_cannot_make_confidence_high(self):
+        failed = SourceEvidence(source="failed", fetched_at="now", elapsed_ms=1, ok=False, error="offline")
+        domestic = SourceEvidence(
+            source="cngeo",
+            fetched_at="now",
+            elapsed_ms=1,
+            ok=True,
+            fields={"country": "示例", "organization": "镜像结果", "trust_tier": "fallback-unverified"},
+        )
+        with patch.object(providers, "_query_source", side_effect=[failed, failed, domestic]) as query:
+            result = providers.scan_ip("1.1.1.1", ("ipapi", "geojs"), timeout=1, fresh=True)
+        self.assertEqual(query.call_count, 3)
+        self.assertTrue(any(item.source == "cngeo" for item in result.evidence))
+        self.assertNotEqual(result.confidence["level"], "high")
+
+    def test_domestic_fallback_is_skipped_when_two_geo_sources_succeed(self):
+        first = SourceEvidence(source="ipapi", fetched_at="now", elapsed_ms=1, ok=True, fields={"country_code": "US"})
+        second = SourceEvidence(source="geojs", fetched_at="now", elapsed_ms=1, ok=True, fields={"country_code": "US"})
+        with patch.object(providers, "_query_source", side_effect=[first, second]) as query:
+            providers.scan_ip("1.1.1.1", ("ipapi", "geojs"), timeout=1, fresh=True)
+        self.assertEqual(query.call_count, 2)
+
+    def test_domestic_fallback_can_be_disabled(self):
+        failed = SourceEvidence(source="failed", fetched_at="now", elapsed_ms=1, ok=False, error="offline")
+        with patch.object(providers, "_query_source", side_effect=[failed, failed]) as query:
+            providers.scan_ip(
+                "1.1.1.1", ("ipapi", "geojs"), timeout=1, fresh=True, domestic_fallback=False
+            )
+        self.assertEqual(query.call_count, 2)
 
 
 if __name__ == "__main__":

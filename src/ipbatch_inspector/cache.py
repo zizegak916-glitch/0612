@@ -17,6 +17,7 @@ SOURCE_TTLS = {
     "rdap": 7 * 24 * 60 * 60,
     "ripestat": 15 * 60,
     "ping0": 30 * 60,
+    "cngeo": 24 * 60 * 60,
 }
 MAX_CACHE_ENTRIES = 20_000
 ERROR_BACKOFF_SECONDS = 60

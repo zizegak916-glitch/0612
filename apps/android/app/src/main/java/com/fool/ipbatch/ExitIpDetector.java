@@ -83,7 +83,7 @@ public final class ExitIpDetector {
             connection.setInstanceFollowRedirects(false);
             connection.setUseCaches(false);
             connection.setRequestProperty("Accept", "application/json");
-            connection.setRequestProperty("User-Agent", "IPBatchInspector/4.1 Android");
+            connection.setRequestProperty("User-Agent", "IPBatchInspector/5.0 Android");
             int code = connection.getResponseCode();
             InputStream input = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
             String body = read(input);

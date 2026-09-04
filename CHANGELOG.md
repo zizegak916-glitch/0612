@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.0.0
+
+- Add single-public-IP detailed investigation with expanded RDAP entities, RIPEstat registration/routing/abuse/visibility, Shodan InternetDB, GreyNoise, PTR and explicit-port TLS certificate capture.
+- Add an automatic HTTPS domestic fallback source when global geolocation evidence is insufficient; label it lower-trust and exclude it from high-confidence thresholds.
+- Add explicit real subscription testing through an already-running loopback Mihomo/Clash controller and system VPN, including node-name matching, switch confirmation, per-node exit evidence, real AI conversation URLs, custom HTTPS targets and best-effort original-node restoration.
+- Add Android foreground-service UI, iOS SwiftUI controls, Windows/Linux desktop tabs, CLI commands and Tampermonkey controls for the new modes.
+- Keep ordinary subscription inspection read-only: no node-port connection or protocol handshake. Keep controller secrets, subscription bodies and browser credentials out of reports and storage.
+
 ## 4.1.0
 
 - Query independent providers concurrently with per-provider limits, retries, TTL caches and 60-second failure backoff.

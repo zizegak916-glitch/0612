@@ -1,7 +1,7 @@
 .PHONY: test lint cli desktop android package clean
 
 test:
-	python3 -m unittest discover -s tests -v
+	PYTHONPATH=src python3 -m unittest discover -s tests -v
 
 lint:
 	python3 -m compileall -q src tests scripts

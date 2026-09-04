@@ -6,6 +6,12 @@ struct ContentView: View {
     @State private var subscriptionURL = ""
     @State private var allowPrivate = false
     @State private var saveName = ""
+    @State private var detailIP = "1.1.1.1"
+    @State private var controllerURL = "http://127.0.0.1:9090"
+    @State private var controllerSecret = ""
+    @State private var exactNode = ""
+    @State private var customTargets = ""
+    @State private var openBrowser = false
 
     var body: some View {
         NavigationStack {
@@ -14,6 +20,7 @@ struct ContentView: View {
                     batchTab.tabItem { Label("Batch IP", systemImage: "list.bullet.rectangle") }
                     subscriptionTab.tabItem { Label("Subscription", systemImage: "link") }
                     routeTab.tabItem { Label("Exit & AI", systemImage: "network") }
+                    advancedTab.tabItem { Label("Advanced", systemImage: "shield.lefthalf.filled") }
                     savedTab.tabItem { Label("Saved", systemImage: "key") }
                 }
                 Divider()
@@ -69,6 +76,32 @@ struct ContentView: View {
                 }
             }
             .onDelete { offsets in offsets.map { model.savedNames[$0] }.forEach { model.delete(name: $0) } }
+        }
+    }
+
+    private var advancedTab: some View {
+        Form {
+            Section("Single-IP detailed investigation") {
+                TextField("One public IPv4 or IPv6", text: $detailIP).textInputAutocapitalization(.never)
+                Button("Investigate public records + TLS certificate") { model.detailedInvestigation(detailIP) }
+                    .disabled(model.isRunning || detailIP.isEmpty)
+                Text("Queries RDAP, RIPEstat, Shodan InternetDB, GreyNoise and PTR, then actively connects only to TLS 443. Private/reserved IPs are rejected.")
+            }
+            Section("Real subscription test via system VPN") {
+                TextField("http://127.0.0.1:9090", text: $controllerURL).textInputAutocapitalization(.never)
+                SecureField("Mihomo/Clash controller secret (not saved)", text: $controllerSecret)
+                TextField("Exact node name; blank tests first 20 matches", text: $exactNode)
+                TextField("Custom HTTPS URLs/domains, comma separated", text: $customTargets).textInputAutocapitalization(.never)
+                Toggle("Open real conversation pages; leave exact node selected", isOn: $openBrowser)
+                Button("Confirm, switch nodes and test") {
+                    model.realSubscriptionTest(url: subscriptionURL, controller: controllerURL, secret: controllerSecret,
+                                               node: exactNode, targets: customTargets, openBrowser: openBrowser)
+                }.disabled(model.isRunning || subscriptionURL.isEmpty || (openBrowser && exactNode.isEmpty))
+                Text("Requires an already-running iOS system VPN/TUN and a loopback External Controller. The subscription is downloaded only for parsing and node-name matching. Normal mode restores the original group selection; browser mode deliberately does not.")
+            }
+            Section("iOS background boundary") {
+                Text("User-started work requests iOS background execution time, but iOS may suspend or terminate long jobs. This app does not embed or create a VPN tunnel; it controls a companion Mihomo/Clash instance already authorized by you.")
+            }
         }
     }
 }

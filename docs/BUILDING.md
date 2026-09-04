@@ -16,13 +16,13 @@ On Windows use `py` instead of `python3`; omit `--windowed` when diagnostic cons
 Windows 安装向导使用 Inno Setup 6：
 
 ```powershell
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=4.1.0 packaging\windows\IPBatchInspector.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=5.0.0 packaging\windows\IPBatchInspector.iss
 ```
 
 Linux 在生成 `dist/IPBatchInspector` 与 `dist/ipbatch-cli` 后可打 DEB 和便携包：
 
 ```bash
-./packaging/linux/build_packages.sh 4.1.0
+./packaging/linux/build_packages.sh 5.0.0
 ```
 
 ## Android

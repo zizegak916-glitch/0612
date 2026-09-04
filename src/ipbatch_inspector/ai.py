@@ -10,7 +10,7 @@ from typing import Any
 
 
 POLICY_SNAPSHOT = "2026-09-02"
-USER_AGENT = "Mozilla/5.0 IPBatchInspector/4.1"
+USER_AGENT = "Mozilla/5.0 IPBatchInspector/5.0"
 
 ENDPOINTS = (
     ("ChatGPT web", "web", "https://chatgpt.com/"),

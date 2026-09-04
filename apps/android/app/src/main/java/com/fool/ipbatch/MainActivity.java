@@ -68,6 +68,9 @@ public final class MainActivity extends Activity {
     private Button viewRawButton;
     private Button aiTestButton;
     private TextView aiTestStatus;
+    private Button detailButton;
+    private Button realTestButton;
+    private TextView advancedStatus;
     private ProgressBar progress;
     private TextView summary;
     private LinearLayout resultContainer;
@@ -91,6 +94,7 @@ public final class MainActivity extends Activity {
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (AiTestForegroundService.ACTION_STATE.equals(intent.getAction())) handleAiBroadcast(intent);
+            else if (AdvancedTestForegroundService.ACTION_STATE.equals(intent.getAction())) restoreAdvancedState();
             else if (ScanForegroundService.ACTION_SUBSCRIPTION_STATE.equals(intent.getAction())) handleSubscriptionBroadcast(intent);
             else if (ScanForegroundService.ACTION_EXIT_STATE.equals(intent.getAction())) handleExitBroadcast(intent);
             else handleScanBroadcast(intent);
@@ -118,6 +122,7 @@ public final class MainActivity extends Activity {
         super.onStart();
         IntentFilter filter = new IntentFilter(ScanForegroundService.ACTION_SCAN_STATE);
         filter.addAction(AiTestForegroundService.ACTION_STATE);
+        filter.addAction(AdvancedTestForegroundService.ACTION_STATE);
         filter.addAction(ScanForegroundService.ACTION_SUBSCRIPTION_STATE);
         filter.addAction(ScanForegroundService.ACTION_EXIT_STATE);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(scanReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
@@ -125,6 +130,7 @@ public final class MainActivity extends Activity {
         scanReceiverRegistered = true;
         restoreScanState();
         restoreAiState();
+        restoreAdvancedState();
         restoreSubscriptionSession();
     }
 
@@ -183,6 +189,18 @@ public final class MainActivity extends Activity {
         aiTestStatus = label("尚未直测。HTTP 可达只证明平台入口响应，不保证登录、账号、支付或具体模型可用。", 11, MUTED, Typeface.NORMAL);
         aiTestStatus.setTextIsSelectable(true); aiTestStatus.setPadding(0, dp(8), 0, 0); aiCard.addView(aiTestStatus);
         content.addView(aiCard, spaced());
+
+        LinearLayout advancedCard = card();
+        advancedCard.addView(label("高级网络调查", 17, INK, Typeface.BOLD));
+        TextView advancedHint = label("详细调查一次只接收 1 个公网 IP，汇集 RDAP、RIPEstat、Shodan InternetDB、GreyNoise、PTR 与 443/TLS 证书；真实测试读取订阅节点名，控制本机 Mihomo/Clash 的回环 API，逐节点通过已开启的 Android 系统 VPN 访问真实 AI 对话网址。", 12, MUTED, Typeface.NORMAL);
+        advancedHint.setPadding(0, dp(5), 0, dp(9)); advancedCard.addView(advancedHint);
+        LinearLayout advancedActions = row();
+        detailButton = primaryButton("单 IP 详细调查"); realTestButton = secondaryButton("订阅真实测试");
+        advancedActions.addView(detailButton, buttonParams()); advancedActions.addView(realTestButton, buttonParams());
+        advancedCard.addView(advancedActions);
+        advancedStatus = label("尚未运行。详细模式只主动连接目标 443/TCP；真实测试会临时改变系统 VPN 的策略组节点，并在普通测试结束时恢复。", 11, MUTED, Typeface.NORMAL);
+        advancedStatus.setTextIsSelectable(true); advancedStatus.setPadding(0, dp(8), 0, 0); advancedCard.addView(advancedStatus);
+        content.addView(advancedCard, spaced());
 
         LinearLayout subCard = card();
         subCard.addView(label("订阅链接批量体检", 17, INK, Typeface.BOLD));
@@ -326,6 +344,8 @@ public final class MainActivity extends Activity {
         refreshNetwork.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { refreshNetworkState(); }});
         subscriptionButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { inspectSubscription(); }});
         aiTestButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { startAiTest(); }});
+        detailButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showDetailDialog(); }});
+        realTestButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showRealTestDialog(); }});
         viewNodesButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showSubscriptionNodes(); }});
         viewRawButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showSubscriptionRaw(); }});
         manageSaved.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showSavedSubscriptions(); }});
@@ -575,6 +595,69 @@ public final class MainActivity extends Activity {
         }
         text.append("\n\n判定边界：这是本应用当前系统路由的入口响应测试。HTTP 403 可能来自地区限制、平台风控或机器人挑战；未登录测试不能保证账号和具体模型可用。");
         aiTestStatus.setText(text.toString());
+    }
+
+    private void showDetailDialog() {
+        final EditText ip = new EditText(this); ip.setHint("一个公网 IP，例如 1.1.1.1"); ip.setSingleLine(true);
+        IpParser.ParseReport current = IpParser.parse(input == null ? "" : input.getText().toString());
+        if (current.ips.size() == 1) ip.setText(current.ips.get(0));
+        new AlertDialog.Builder(this).setTitle("单 IP 详细调查").setMessage("会查询公开数据库，并只对目标 443/TCP 发起一次 TLS 握手以读取证书；拒绝私网/保留地址，不做端口扫描。")
+                .setView(ip).setNegativeButton("取消", null).setPositiveButton("开始后台调查", (dialog, which) -> {
+                    String value = ip.getText().toString().trim();
+                    String normalized = IpParser.normalize(value);
+                    if (normalized == null || !IpParser.isPublic(normalized)) { toast("请输入且只输入一个公网 IP"); return; }
+                    requestNotificationPermission(); detailButton.setEnabled(false); realTestButton.setEnabled(false);
+                    advancedStatus.setText("详细调查已交给系统前台服务，可切换应用或锁屏…");
+                    Intent service = new Intent(this, AdvancedTestForegroundService.class).setAction(AdvancedTestForegroundService.ACTION_DETAIL);
+                    service.putExtra(AdvancedTestForegroundService.EXTRA_IP, normalized); startForeground(service);
+                }).show();
+    }
+
+    private void showRealTestDialog() {
+        final LinearLayout form = column(); form.setPadding(dp(20), 0, dp(20), 0);
+        final EditText controller = new EditText(this); controller.setHint("控制器，例如 http://127.0.0.1:9090"); controller.setSingleLine(true);
+        controller.setText(prefs().getString("real_controller", "http://127.0.0.1:9090")); form.addView(controller, matchWrap());
+        final EditText secret = new EditText(this); secret.setHint("控制器 Secret（不保存）"); secret.setSingleLine(true); secret.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD); form.addView(secret, matchWrap());
+        final EditText node = new EditText(this); node.setHint("精确节点名（留空自动测前 20 个）"); node.setSingleLine(true); form.addView(node, matchWrap());
+        final EditText targets = new EditText(this); targets.setHint("自定义 HTTPS 域名/网址，逗号或换行；内置 9 个 AI 对话网址"); targets.setMinLines(2); form.addView(targets, matchWrap());
+        final CheckBox browser = checkbox("只测上述精确节点并打开真实对话页面（测试后不恢复节点）", false); form.addView(browser);
+        new AlertDialog.Builder(this).setTitle("订阅真实测试")
+                .setMessage("需要先在 Clash/Mihomo/Clash Mate 开启 Android 系统 VPN/TUN 和 External Controller。测试期间会影响该策略组的其他流量；订阅仍只用于解析和名称匹配。")
+                .setView(form).setNegativeButton("取消", null).setPositiveButton("确认并后台测试", (dialog, which) -> {
+                    String url = subscriptionInput.getText().toString().trim();
+                    if (url.isEmpty()) { toast("请先在订阅区域填写或载入订阅链接"); return; }
+                    if (browser.isChecked() && node.getText().toString().trim().isEmpty()) { toast("浏览器模式必须填写一个精确节点名"); return; }
+                    prefs().edit().putString("real_controller", controller.getText().toString().trim()).apply();
+                    requestNotificationPermission(); detailButton.setEnabled(false); realTestButton.setEnabled(false);
+                    advancedStatus.setText("真实测试已交给系统前台服务；正在核验 VPN、匹配节点并逐项访问…");
+                    Intent service = new Intent(this, AdvancedTestForegroundService.class).setAction(AdvancedTestForegroundService.ACTION_REAL);
+                    service.putExtra(AdvancedTestForegroundService.EXTRA_URL, url);
+                    service.putExtra(AdvancedTestForegroundService.EXTRA_CONTROLLER, controller.getText().toString().trim());
+                    service.putExtra(AdvancedTestForegroundService.EXTRA_SECRET, secret.getText().toString());
+                    service.putExtra(AdvancedTestForegroundService.EXTRA_NODE, node.getText().toString());
+                    service.putExtra(AdvancedTestForegroundService.EXTRA_TARGETS, targets.getText().toString());
+                    service.putExtra(AdvancedTestForegroundService.EXTRA_BROWSER, browser.isChecked()); startForeground(service);
+                }).show();
+    }
+
+    private void startForeground(Intent service) {
+        try { if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service); }
+        catch (Exception failure) { detailButton.setEnabled(true); realTestButton.setEnabled(true); advancedStatus.setText("高级后台服务启动失败：" + safe(failure)); }
+    }
+
+    private void restoreAdvancedState() {
+        if (advancedStatus == null) return;
+        AdvancedReportStore.State state = AdvancedReportStore.load(this);
+        detailButton.setEnabled(!state.running); realTestButton.setEnabled(!state.running);
+        if (state.running) { advancedStatus.setText("高级模式正在系统前台服务中运行…"); return; }
+        if (state.error != null && !state.error.isEmpty()) { advancedStatus.setText("高级模式失败：" + state.error); return; }
+        if (state.report != null && !state.report.isEmpty()) {
+            advancedStatus.setText(("detail".equals(state.kind) ? "详细调查" : "真实测试") + "已完成。点击此处查看完整报告。");
+            advancedStatus.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+                AdvancedReportStore.State latest = AdvancedReportStore.load(MainActivity.this);
+                if (!latest.report.isEmpty()) showTextDialog("detail".equals(latest.kind) ? "单 IP 详细调查" : "订阅真实测试", latest.report);
+            }});
+        }
     }
 
     private void updateSummary(int now) {

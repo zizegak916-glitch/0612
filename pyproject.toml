@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ipbatch-inspector"
-version = "4.1.0"
-description = "Cross-platform, evidence-first IP intelligence and subscription inspection without proxy-node connections"
+version = "5.0.0"
+description = "Cross-platform IP intelligence, safe subscription inspection and explicit system-VPN route testing"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

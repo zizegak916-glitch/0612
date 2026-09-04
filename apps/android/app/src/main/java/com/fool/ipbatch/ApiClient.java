@@ -86,6 +86,24 @@ public final class ApiClient {
                 out.errors.add(sourceOrder.get(index) + "：" + safeMessage(failure));
             }
         }
+        int geoRequested = (settings.ipapi ? 1 : 0) + (settings.proxyCheck ? 1 : 0) + (settings.geoJs ? 1 : 0)
+                + (settings.ping0 && !settings.ping0Key.trim().isEmpty() ? 1 : 0);
+        int geoSucceeded = 0;
+        for (String evidence : out.sourceEvidence) {
+            String lower = evidence.toLowerCase(Locale.ROOT);
+            if (lower.startsWith("ipapi") || lower.startsWith("proxycheck") || lower.startsWith("geojs") || lower.startsWith("ping0")) geoSucceeded++;
+        }
+        if (geoRequested >= 2 && geoSucceeded < 2) {
+            final IpResult mirror = new IpResult(ip);
+            call("CIP.cc 国内备用", mirror, new Request() { @Override public void run() throws Exception { queryCnGeo(ip, mirror, settings.timeoutMs); }});
+            out.sourceEvidence.addAll(mirror.sourceEvidence); out.errors.addAll(mirror.errors); out.sourceDetails.addAll(mirror.sourceDetails);
+            if (out.country.isEmpty()) out.country = mirror.country;
+            if (out.region.isEmpty()) out.region = mirror.region;
+            if (out.city.isEmpty()) out.city = mirror.city;
+            if (out.org.isEmpty()) out.org = mirror.org;
+            // Deliberately do not increment successfulSources or include this in
+            // consensus: this non-authoritative mirror cannot create high confidence.
+        }
         applyConsensus(out, partials);
         out.finish();
         return out;
@@ -293,6 +311,31 @@ public final class ApiClient {
         out.sourceDetails.add("RIPEstat 路由：" + out.routing);
     }
 
+    private void queryCnGeo(String ip, IpResult out, int timeout) throws Exception {
+        String body = get("https://www.cip.cc/" + enc(ip), timeout);
+        String plain = body.replaceAll("(?is).*?<pre[^>]*>", "").replaceAll("(?is)</pre>.*", "")
+                .replaceAll("<[^>]+>", "").replace("&nbsp;", " ").replace("&amp;", "&")
+                .replace("&lt;", "<").replace("&gt;", ">");
+        String echoed = field(plain, "IP"), location = field(plain, "地址"), operator = field(plain, "运营商");
+        if (echoed.isEmpty() || !sameIp(ip, echoed)) throw new Exception("备用镜像未回显目标 IP");
+        String[] pieces = location.split("\\s+", 3);
+        if (pieces.length > 0 && !pieces[0].isEmpty()) out.country = pieces[0];
+        if (pieces.length > 1) out.region = pieces[1];
+        if (pieces.length > 2) out.city = pieces[2];
+        out.org = operator;
+        out.sourceDetails.add("CIP.cc：" + location + (operator.isEmpty() ? "" : "；" + operator)
+                + "（低可信备用，不参与高置信度）");
+    }
+
+    private String field(String text, String wanted) {
+        String[] lines = text.replace('\r', '\n').split("\\n");
+        for (String line : lines) {
+            int colon = line.indexOf(':'); if (colon < 0) colon = line.indexOf('：');
+            if (colon > 0 && line.substring(0, colon).trim().equals(wanted)) return line.substring(colon + 1).trim();
+        }
+        return "";
+    }
+
     private void queryPing0(String ip, IpResult out, Settings settings) throws Exception {
         String endpoint = "https://ping0.cc/apiloc/apikey(" + enc(settings.ping0Key.trim()) + ")/ip(" + enc(ip) + ")";
         JSONObject root = new JSONObject(get(endpoint, settings.timeoutMs));
@@ -319,7 +362,7 @@ public final class ApiClient {
             connection.setInstanceFollowRedirects(false);
             connection.setUseCaches(false);
             connection.setRequestProperty("Accept", "application/json");
-            connection.setRequestProperty("User-Agent", "IPBatchInspector/4.1 Android");
+            connection.setRequestProperty("User-Agent", "IPBatchInspector/5.0 Android");
             int code = connection.getResponseCode();
             InputStream input = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
             String body = read(input);
@@ -345,7 +388,7 @@ public final class ApiClient {
                 connection.setInstanceFollowRedirects(false);
                 connection.setUseCaches(false);
                 connection.setRequestProperty("Accept", "application/rdap+json, application/json");
-                connection.setRequestProperty("User-Agent", "IPBatchInspector/4.1 Android");
+                connection.setRequestProperty("User-Agent", "IPBatchInspector/5.0 Android");
                 int code = connection.getResponseCode();
                 if (code >= 300 && code < 400) {
                     String location = connection.getHeaderField("Location");

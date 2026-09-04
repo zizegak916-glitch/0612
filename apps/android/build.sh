@@ -7,7 +7,7 @@ PLATFORM_DIR="$TOOLCHAIN_DIR/platform"
 BUILD_TOOLS_DIR="$TOOLCHAIN_DIR/build-tools"
 BUILD_DIR="$PROJECT_DIR/build"
 ECJ_JAR="$TOOLCHAIN_DIR/ecj-3.37.0.jar"
-VERSION="${IPBATCH_VERSION:-4.1.0}"
+VERSION="${IPBATCH_VERSION:-5.0.0}"
 
 mkdir -p "$PLATFORM_DIR" "$BUILD_TOOLS_DIR" "$BUILD_DIR/downloads"
 
@@ -49,7 +49,7 @@ mkdir -p "$BUILD_DIR/gen" "$BUILD_DIR/classes" "$BUILD_DIR/test-classes" "$BUILD
   --java "$BUILD_DIR/gen" \
   --min-sdk-version 23 \
   --target-sdk-version 35 \
-  --version-code 6 \
+  --version-code 7 \
   --version-name "$VERSION" \
   "$BUILD_DIR/compiled.zip"
 
