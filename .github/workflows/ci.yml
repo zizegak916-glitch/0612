@@ -121,25 +121,25 @@ jobs:
           PYTHONPATH: src
       - name: Enforce Android system-VPN and ordinary-mode separation
         run: |
-          rg -n 'android\.net\.VpnService' apps/android/app/src/main/java/com/fool/ipbatch/SystemVpnService.java
-          rg -n 'android\.permission\.BIND_VPN_SERVICE' apps/android/app/src/main/AndroidManifest.xml
-          rg -n 'protect\(fd\)' apps/android/app/src/main/java/com/fool/ipbatch/SystemVpnService.java
-          rg -n '拒绝私网/保留节点服务器|节点域名解析到私网/保留地址' apps/android/app/src/main/java/com/fool/ipbatch/SingBoxConfigBuilder.java
-          if rg -n 'SystemVpnService|CommandServer|startOrReloadService' \
+          grep -nE 'android\.net\.VpnService' apps/android/app/src/main/java/com/fool/ipbatch/SystemVpnService.java
+          grep -nE 'android\.permission\.BIND_VPN_SERVICE' apps/android/app/src/main/AndroidManifest.xml
+          grep -nE 'protect\(fd\)' apps/android/app/src/main/java/com/fool/ipbatch/SystemVpnService.java
+          grep -nE '拒绝私网/保留节点服务器|节点域名解析到私网/保留地址' apps/android/app/src/main/java/com/fool/ipbatch/SingBoxConfigBuilder.java
+          if grep -nE 'SystemVpnService|CommandServer|startOrReloadService' \
               apps/android/app/src/main/java/com/fool/ipbatch/SubscriptionParser.java \
               apps/android/app/src/main/java/com/fool/ipbatch/SubscriptionResolver.java \
               apps/android/app/src/main/java/com/fool/ipbatch/ScanForegroundService.java; then
             echo 'Ordinary subscription path references real VPN APIs.' >&2
             exit 1
           fi
-          if rg -n 'NEPacketTunnelProvider|NEDNSProxyProvider' apps/ios; then
+          if grep -R -nE --include='*.swift' 'NEPacketTunnelProvider|NEDNSProxyProvider' apps/ios; then
             echo 'iOS tunnel APIs are not implemented in this Android-only milestone.' >&2
             exit 1
           fi
       - name: Validate userscript syntax and no node-connection primitives
         run: |
           node --check userscript/IPBatchInspector.user.js
-          if rg -n 'WebSocket|RTCPeerConnection|ProxyService' userscript/IPBatchInspector.user.js; then
+          if grep -nE 'WebSocket|RTCPeerConnection|ProxyService' userscript/IPBatchInspector.user.js; then
             echo 'Forbidden node-connection primitive found in userscript.' >&2
             exit 1
           fi
