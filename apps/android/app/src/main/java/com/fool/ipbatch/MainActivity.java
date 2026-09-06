@@ -17,6 +17,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
@@ -48,6 +49,7 @@ import org.json.JSONObject;
 
 public final class MainActivity extends Activity {
     private static final int EXPORT_REQUEST = 41;
+    private static final int VPN_REQUEST = 42;
     private static final int BLUE = Color.rgb(55, 107, 255);
     private static final int INK = Color.rgb(23, 32, 51);
     private static final int MUTED = Color.rgb(102, 113, 133);
@@ -90,6 +92,8 @@ public final class MainActivity extends Activity {
     private boolean scanRunning;
     private boolean scanReceiverRegistered;
     private String resultStatusFilter = "全部";
+    private String pendingRealUrl = "", pendingRealNode = "", pendingRealTargets = "";
+    private boolean pendingRealAllowPrivate, pendingRealBrowser;
 
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -192,13 +196,13 @@ public final class MainActivity extends Activity {
 
         LinearLayout advancedCard = card();
         advancedCard.addView(label("高级网络调查", 17, INK, Typeface.BOLD));
-        TextView advancedHint = label("详细调查一次只接收 1 个公网 IP，汇集 RDAP、RIPEstat、Shodan InternetDB、GreyNoise、PTR 与 443/TLS 证书；真实测试读取订阅节点名，控制本机 Mihomo/Clash 的回环 API，逐节点通过已开启的 Android 系统 VPN 访问真实 AI 对话网址。", 12, MUTED, Typeface.NORMAL);
+        TextView advancedHint = label("详细调查一次只接收 1 个公网 IP，汇集注册、路由、风险、PTR 与 443/TLS 证书；真实测试由本应用内嵌 sing-box 建立 Android 系统 VPN，逐节点访问 AI 对话网址，不再依赖外部 Clash 控制器。", 12, MUTED, Typeface.NORMAL);
         advancedHint.setPadding(0, dp(5), 0, dp(9)); advancedCard.addView(advancedHint);
         LinearLayout advancedActions = row();
         detailButton = primaryButton("单 IP 详细调查"); realTestButton = secondaryButton("订阅真实测试");
         advancedActions.addView(detailButton, buttonParams()); advancedActions.addView(realTestButton, buttonParams());
         advancedCard.addView(advancedActions);
-        advancedStatus = label("尚未运行。详细模式只主动连接目标 443/TCP；真实测试会临时改变系统 VPN 的策略组节点，并在普通测试结束时恢复。", 11, MUTED, Typeface.NORMAL);
+        advancedStatus = label("尚未运行。真实测试需要 Android 系统 VPN 授权；批量完成后自动拆除 TUN，浏览器验证模式由通知栏手动停止。普通订阅体检永不连接节点。", 11, MUTED, Typeface.NORMAL);
         advancedStatus.setTextIsSelectable(true); advancedStatus.setPadding(0, dp(8), 0, 0); advancedCard.addView(advancedStatus);
         content.addView(advancedCard, spaced());
 
@@ -615,29 +619,35 @@ public final class MainActivity extends Activity {
 
     private void showRealTestDialog() {
         final LinearLayout form = column(); form.setPadding(dp(20), 0, dp(20), 0);
-        final EditText controller = new EditText(this); controller.setHint("控制器，例如 http://127.0.0.1:9090"); controller.setSingleLine(true);
-        controller.setText(prefs().getString("real_controller", "http://127.0.0.1:9090")); form.addView(controller, matchWrap());
-        final EditText secret = new EditText(this); secret.setHint("控制器 Secret（不保存）"); secret.setSingleLine(true); secret.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD); form.addView(secret, matchWrap());
         final EditText node = new EditText(this); node.setHint("精确节点名（留空自动测前 20 个）"); node.setSingleLine(true); form.addView(node, matchWrap());
-        final EditText targets = new EditText(this); targets.setHint("自定义 HTTPS 域名/网址，逗号或换行；内置 9 个 AI 对话网址"); targets.setMinLines(2); form.addView(targets, matchWrap());
-        final CheckBox browser = checkbox("只测上述精确节点并打开真实对话页面（测试后不恢复节点）", false); form.addView(browser);
+        final EditText targets = new EditText(this); targets.setHint("自定义 HTTPS 域名/网址，逗号或换行；内置 7 个 AI 对话网址"); targets.setMinLines(2); form.addView(targets, matchWrap());
+        final CheckBox browser = checkbox("只测精确节点，并在其系统 VPN 下打开真实对话页面", false); form.addView(browser);
+        final CheckBox acknowledge = checkbox("我确认真实测试会临时接管设备系统流量，并连接订阅节点", false); form.addView(acknowledge);
         new AlertDialog.Builder(this).setTitle("订阅真实测试")
-                .setMessage("需要先在 Clash/Mihomo/Clash Mate 开启 Android 系统 VPN/TUN 和 External Controller。测试期间会影响该策略组的其他流量；订阅仍只用于解析和名称匹配。")
+                .setMessage("这是唯一会连接订阅节点的模式。本应用会请求 Android 正式 VPN 授权，内嵌 sing-box 建立全设备 TUN；不读取 Cookie、账号、API Key，也不发送对话。")
                 .setView(form).setNegativeButton("取消", null).setPositiveButton("确认并后台测试", (dialog, which) -> {
                     String url = subscriptionInput.getText().toString().trim();
                     if (url.isEmpty()) { toast("请先在订阅区域填写或载入订阅链接"); return; }
                     if (browser.isChecked() && node.getText().toString().trim().isEmpty()) { toast("浏览器模式必须填写一个精确节点名"); return; }
-                    prefs().edit().putString("real_controller", controller.getText().toString().trim()).apply();
-                    requestNotificationPermission(); detailButton.setEnabled(false); realTestButton.setEnabled(false);
-                    advancedStatus.setText("真实测试已交给系统前台服务；正在核验 VPN、匹配节点并逐项访问…");
-                    Intent service = new Intent(this, AdvancedTestForegroundService.class).setAction(AdvancedTestForegroundService.ACTION_REAL);
-                    service.putExtra(AdvancedTestForegroundService.EXTRA_URL, url);
-                    service.putExtra(AdvancedTestForegroundService.EXTRA_CONTROLLER, controller.getText().toString().trim());
-                    service.putExtra(AdvancedTestForegroundService.EXTRA_SECRET, secret.getText().toString());
-                    service.putExtra(AdvancedTestForegroundService.EXTRA_NODE, node.getText().toString());
-                    service.putExtra(AdvancedTestForegroundService.EXTRA_TARGETS, targets.getText().toString());
-                    service.putExtra(AdvancedTestForegroundService.EXTRA_BROWSER, browser.isChecked()); startForeground(service);
+                    if (!acknowledge.isChecked()) { toast("请先确认系统 VPN 与节点连接影响"); return; }
+                    pendingRealUrl = url; pendingRealNode = node.getText().toString().trim(); pendingRealTargets = targets.getText().toString();
+                    pendingRealAllowPrivate = allowPrivateSubscription.isChecked(); pendingRealBrowser = browser.isChecked();
+                    Intent permission = VpnService.prepare(this);
+                    if (permission != null) startActivityForResult(permission, VPN_REQUEST); else launchRealVpnTest();
                 }).show();
+    }
+
+    private void launchRealVpnTest() {
+        if (pendingRealUrl.isEmpty()) return;
+        requestNotificationPermission(); detailButton.setEnabled(false); realTestButton.setEnabled(false);
+        advancedStatus.setText("系统 VPN 服务正在下载订阅并验证节点；TUN 会在下载和私网检查之后建立…");
+        try {
+            SystemVpnService.start(this, pendingRealUrl, pendingRealAllowPrivate, pendingRealNode, pendingRealTargets, pendingRealBrowser);
+            pendingRealUrl = "";
+        } catch (Exception failure) {
+            detailButton.setEnabled(true); realTestButton.setEnabled(true);
+            advancedStatus.setText("系统 VPN 服务启动失败：" + safe(failure));
+        }
     }
 
     private void startForeground(Intent service) {
@@ -907,6 +917,11 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == VPN_REQUEST) {
+            if (resultCode == RESULT_OK) launchRealVpnTest();
+            else { pendingRealUrl = ""; advancedStatus.setText("Android 系统 VPN 授权被拒绝；未连接任何订阅节点。"); }
+            return;
+        }
         if (requestCode != EXPORT_REQUEST || resultCode != RESULT_OK || data == null || pendingCsv == null) return;
         Uri uri = data.getData(); if (uri == null) return;
         try {

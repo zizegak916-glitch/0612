@@ -15,6 +15,9 @@ release/
 # Android toolchains, outputs, and signing material
 apps/android/.toolchain/
 apps/android/build/
+apps/android/.native/
+apps/android/app/libs/libbox.aar
+apps/android/app/libs/libbox.aar.sha256
 apps/android/*.jks
 apps/android/*.keystore
 apps/android/local.properties

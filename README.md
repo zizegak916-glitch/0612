@@ -1,14 +1,14 @@
-# IPBatchInspector 5
+# IPBatchInspector 6 · Android system-VPN alpha
 
-IPBatchInspector 是一套证据优先、跨平台的 IP 批量情报与订阅检查工具。一个仓库同时提供 Android、iOS、Windows、Linux、终端 CLI、Bash/PowerShell 脚本和 Tampermonkey/油猴版。5.0 增加“单 IP 详细调查”和“订阅真实测试”两个互相隔离的高级模式。
+IPBatchInspector 是一套证据优先、跨平台的 IP 批量情报与订阅检查工具。一个仓库同时提供 Android、iOS、Windows、Linux、终端 CLI、Bash/PowerShell 脚本和 Tampermonkey/油猴版。6.0-alpha 首先把 Android 的“真实测试”升级为应用自身的系统 VPN；其他平台仍保留 5.x 的外部 Mihomo 控制器实现，不能把两者混称为同一能力。
 
-> 默认订阅体检仍然只解析、做系统 DNS 并查询节点 IP 情报，绝不连接节点端口。只有用户主动进入“真实测试”、确认影响范围并连接本机回环 Mihomo/Clash API 后，程序才会切换已有系统 VPN 的策略组并访问指定网址；项目不内置代理核心、不导入节点凭据、不自行建立隧道。
+> 默认订阅体检仍然只解析、做系统 DNS 并查询节点 IP 情报，绝不连接节点端口。只有用户主动进入 Android“真实测试”、勾选影响确认并通过系统 VPN 授权后，内嵌 sing-box/libbox 才会读取节点凭据、建立临时全设备 TUN 并逐节点访问指定网址。普通模式和真实模式是两条代码路径。
 
 ## 平台与入口
 
 | 平台 | 入口 | 当前实现 |
 | --- | --- | --- |
-| Android 6+ | `apps/android` | 原生 Java；前台服务、详细调查、当前出口、订阅只解析及本机控制器真实测试 |
+| Android 7+ | `apps/android` | 原生 Java；正式 `VpnService`、内嵌 libbox、后台前台服务、详细调查、当前出口、订阅只解析及真实节点测试 |
 | iOS 16+ | `apps/ios` | 原生 SwiftUI；短时后台、详细调查、订阅只解析及本机控制器真实测试 |
 | Windows 10/11 | `ipbatch-gui` | Python/Tk 原生桌面窗口；详细/真实模式；可由 CI 打包为单文件 EXE |
 | Linux | `ipbatch-gui` | Python/Tk 桌面窗口；详细/真实模式；可由 CI 打包为可执行文件 |
@@ -25,7 +25,7 @@ IPBatchInspector 是一套证据优先、跨平台的 IP 批量情报与订阅�
 | Windows x64 | `Windows-x64-Setup.exe` | 双击，按安装向导完成；也有 portable EXE | 可直接安装；未配置 Authenticode，SmartScreen 可能提示未知发布者 |
 | Debian/Ubuntu x64 | `linux-x86_64.deb` | `sudo apt install ./IPBatchInspector-*.deb` | GitHub Actions 原生构建；DEB 当前未做发行版仓库签名 |
 | 通用 Linux x64 | `linux-x86_64.tar.gz` | 解压后运行 `ipbatch-gui` 或 `ipbatch-cli` | 免安装包 |
-| Android 6+ | `android-release.apk` 或 `android-debug.apk` | 允许浏览器/文件管理器安装未知应用后侧载 | `release` 仅在 GitHub Secrets 配置私有发布密钥时出现；`debug` 可安装但不是正式升级签名 |
+| Android 7+ | `android-release.apk` 或 `android-debug.apk` | 允许浏览器/文件管理器安装未知应用后侧载；真实测试首次启动会出现 Android VPN 授权页 | `release` 仅在 GitHub Secrets 配置私有发布密钥时出现；`debug` 可安装但不是正式升级签名 |
 | iOS 模拟器 | `iOS-Simulator.zip` | 拖入 Xcode Simulator | 不是 iPhone IPA；真机必须由 Apple 证书和描述文件签名 |
 | Python/终端 | `.whl` | `python -m pip install ./ipbatch_inspector-*.whl` | 平台无关 Python 包 |
 | 油猴 | `.user.js` | [直接打开主分支脚本](https://raw.githubusercontent.com/zizegak916-glitch/0612/main/userscript/IPBatchInspector.user.js)，在 Tampermonkey 中审查权限并安装 | 源码即安装内容，可自动检查更新 |
@@ -98,15 +98,18 @@ ipbatch monitor --config monitor.example.json [--once]
 
 ### 订阅真实测试
 
-真实测试需要设备上已经运行并由用户授权的 Clash/Mihomo 兼容客户端：
+Android 6.0-alpha 不需要另装 Clash/Mihomo，也不需要 External Controller：
 
-1. 在客户端开启 TUN/系统 VPN 与 External Controller，例如 `127.0.0.1:9090`；如有 Secret，通过密码框、`--controller-secret-file` 或临时环境变量 `MIHOMO_SECRET` 提供。
-2. 在 IPBatchInspector 载入订阅。订阅只用于解析节点名称，再与控制器 `/proxies` 返回的节点求交集；程序不连接订阅中的服务器地址或端口。
-3. 程序确认 `/configs` 的 TUN 已开启，记录测试前出口，逐节点执行 `PUT /proxies/{group}`，回读确认实际选择，然后访问 ChatGPT、Claude、Gemini、AI Studio、Grok、Perplexity、Copilot、DeepSeek、Qwen 的真实对话网址及用户自定义公网 HTTPS URL。
-4. 匿名探针不发送登录 Cookie、账号、API Key、提示词或消息。登录跳转记为“已到达但需要认证”，只有响应明确出现国家/地区不可用语义时才标记 `geo_blocked`；403 会区分可能的 WAF/挑战，不能自动等同地区封锁。
-5. 普通模式在 `finally` 中恢复原策略组节点。`--open-browser`/“打开对话页面”只允许一个精确节点，并故意保留该节点，让真实浏览器会话访问对话页；完成后由用户在代理客户端恢复。
+1. 载入订阅后进入“订阅真实测试”，可填写精确节点名；留空时最多转换并测试前 20 个受支持节点。
+2. 勾选影响确认，接受 Android 自带的 VPN 授权页。订阅在 TUN 建立前下载，节点域名只要有一个 DNS 答案属于私网/保留地址就拒绝该节点。
+3. 内嵌 libbox 按节点建立/重载临时 sing-box 配置，经 `VpnService.Builder.establish()` 获得 TUN，并用 `VpnService.protect(fd)` 保护核心出站套接字避免回环。
+4. 每个节点重新检测应用出口，并访问 ChatGPT、Claude、Gemini、AI Studio、Grok、Perplexity、Copilot 的真实对话网址及用户自定义公网 HTTPS URL；记录最终 URL、HTTP 分类、时延及当前 TLS 证书摘要。
+5. 匿名探针不发送登录 Cookie、账号、API Key、提示词或消息。登录跳转记为“已到达但需要认证”，只有响应明确出现国家/地区不可用语义时才标记 `geo_blocked`；403 会区分可能的 WAF/挑战，不能自动等同地区封锁。
+6. 批量探测完成或失败后关闭 libbox、TUN 和前台服务。浏览器验证只允许一个精确节点，会在该系统 VPN 下打开真实对话页，并保持到用户点击通知栏“停止 VPN”。
 
-控制器只允许 `http://127.0.0.1:端口`、`localhost` 或 `[::1]`，拒绝远程控制器、URL 用户信息和路径。切换策略组会短时影响使用同一系统 VPN 的其他应用；进程被强杀、控制器掉线或分流规则绕过测试进程时，结果和恢复均可能失败，报告会保留错误。
+当前内嵌转换覆盖 sing-box JSON、常见 Clash/Mihomo YAML，以及 VLESS、VMess、SS（不含 plugin）、Trojan、Hysteria/Hysteria2、TUIC、SOCKS、HTTP URI；Clash `dialer-proxy` 和 sing-box `detour` 会保留为链。SSR 已被 sing-box 1.14 移除，因此只能普通解析，真实模式明确拒绝。私有加密订阅、复杂 YAML 锚点或尚未映射的插件会给出逐节点警告，不会伪称“全部协议都已连接验证”。
+
+Windows、Linux、CLI、iOS 与油猴目前仍使用 5.x 的本机 Mihomo 控制器方式；它们不是本轮 Android 内嵌 VPN。系统 VPN 会在测试期间短时影响设备其他流量，且 Android 同时只允许一个活跃 VPN。
 
 ### Windows/Linux 后台运行
 
@@ -140,7 +143,7 @@ ipbatch monitor --config monitor.example.json [--once]
 
 ## 情报与真实性
 
-默认源为 ipapi.is、proxycheck.io、GeoJS、RDAP 和 RIPEstat；可通过 `--sources` 选择。当至少两个全球地理源被请求但成功不足两个时，自动调用 CIP.cc HTTPS 国内备用页。该镜像标记为 `fallback-unverified`，不参与 high 置信度门槛，也不会覆盖已有权威登记/BGP 证据。每条结果记录查询目标、来源、UTC 时间、耗时、缓存命中与年龄、字段和错误。风险分始终保留来源，不把不同供应商的模型平均成伪精确总分。
+默认源为 ipapi.is、proxycheck.io、GeoJS、RDAP 和 RIPEstat；可通过 `--sources` 选择。当至少两个全球地理源被请求但成功不足两个时，自动调用 CIP.cc HTTPS 境内辅助页。它不是任何核心数据库的官方镜像，标记为 `fallback-unverified`，不参与 high 置信度门槛，也不会覆盖已有权威登记/BGP 证据。每条结果记录查询目标、来源、UTC 时间、耗时、缓存命中与年龄、字段和错误。风险分始终保留来源，不把不同供应商的模型平均成伪精确总分。
 
 国家、国家代码、ASN、地区、城市和组织按成功来源投票，`consensus` 保留获胜值、同意数和来源；`conflicts` 保存所有不一致值。代理/VPN/Tor/机房/滥用字段不再用“缺失即否”：`signals` 明确区分多源确认、单源报告、来源矛盾、明确未报和未知。`confidence` 只给可解释的 high/medium/low/none 等级，不给没有校准依据的综合小数分。
 
@@ -152,21 +155,21 @@ AI 检测分三类：
 
 1. 当前设备直测公开网页/API 入口，只使用系统默认网络，不发送账号、Cookie、API Key 或提示词；预期的 400/401 鉴权错误表示入口有响应，不表示账号可用。
 2. 对订阅节点只根据国家代码、官方地区快照和 IP 风险字段做推断，明确标注“未连接节点、非解锁实测”。
-3. 用户显式启动的订阅真实测试，通过已有系统 VPN 逐节点访问真实对话 URL；它比地区推断更直接，但未登录匿名响应仍不能保证账号、付费权限、具体模型或发消息成功。
+3. 用户显式启动的 Android 订阅真实测试，通过本应用建立的系统 VPN 逐节点访问真实对话 URL；它比地区推断更直接，但未登录匿名响应仍不能保证账号、付费权限、具体模型或发消息成功。
 
 ## 系统级/后台边界
 
-- Android 使用正式前台服务，扫描、详细调查与真实测试离开页面后可继续，并显示系统通知；它不是 root、系统 UID 或 `/system/priv-app`。
+- Android 使用正式 `VpnService` 和前台服务。扫描、详细调查与真实测试离开页面后可继续；它具有用户授权的 VPN 数据平面，但仍不是 root、系统 UID 或 `/system/priv-app`。
 - Windows/Linux 桌面窗口关闭后，当前交互任务会停止；已由用户显式安装的 systemd 用户服务或 Windows 计划任务独立运行。安装包不会在未告知的情况下自动启用后台监控。
 - iOS 不允许普通第三方应用无限后台运行。应用在前台完成检测；系统只可能为短时任务提供有限后台时间。项目不会声称绕过 iOS 限制。
 - 油猴脚本依赖浏览器标签页和扩展生命周期，不能替代系统服务；需要可靠后台监控时使用 Android 前台服务或 Windows/Linux 原生监控入口。
-- 所有联网探针都使用当前进程的系统默认路由。真实测试只控制已经运行的 Mihomo/Clash 兼容系统 VPN；项目本身不携带代理协议实现，不能替代代理客户端。
+- 普通探针使用当前进程默认路由；Android 真实测试携带 libbox 代理协议实现并建立临时系统 VPN。其他平台的 5.x 真实测试仍依赖外部 Mihomo。
 
 ## 构建
 
 - Python/CLI：`python -m build`
 - Windows/Linux GUI：见 [`docs/BUILDING.md`](docs/BUILDING.md)
-- Android：`cd apps/android && ./build.sh`
+- Android：`cd apps/android && ./build.sh`（首次会下载固定版本 Go、NDK、Android SDK、sing-box 源码并构建四 ABI libbox，耗时和体积明显高于 5.x）
 - iOS：用 Xcode 打开 `apps/ios/IPBatchInspector.xcodeproj`，选择模拟器或签名设备构建。
 - GitHub Actions：每次提交执行 Python、Android、Windows、Linux、iOS 和油猴静态/构建检查；新增 `.github/releases/v*.json` 发布清单后自动创建对应标签和 GitHub Release。
 - 每次主分支 CI 同时提供 Android APK、Windows/Linux CLI 与桌面程序、iOS 模拟器包作为 Actions artifacts；iOS 真机安装仍需用户自己的 Apple 签名。
@@ -175,4 +178,4 @@ AI 检测分三类：
 
 ## 开源许可
 
-MIT License。第三方数据源各自的速率、授权和服务条款仍然适用。
+GPLv3 或更高版本，并保留上游 `LICENSE` 末尾的名称/关联限制。Android 内嵌 sing-box/libbox，因此不再沿用旧版 MIT 许可；来源与固定提交见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。第三方数据源各自的速率、授权和服务条款仍然适用。

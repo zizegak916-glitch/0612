@@ -78,6 +78,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            apps/android/app/libs/libbox.aar
+            apps/android/app/libs/libbox.aar.sha256
+          key: android-libbox-v1.14.0-0b8995879f29a9b98ee027bc17b75e101445b238-r1
       - name: Build and run Android smoke tests
         working-directory: apps/android
         run: ./build.sh
@@ -113,10 +119,21 @@ jobs:
         run: python -m unittest tests.test_iptools.IpToolsTest.test_node_port_never_enters_resolver -v
         env:
           PYTHONPATH: src
-      - name: Reject proxy/VPN service APIs in native clients
+      - name: Enforce Android system-VPN and ordinary-mode separation
         run: |
-          if rg -n 'VpnService|BIND_VPN_SERVICE|NEPacketTunnelProvider|NEDNSProxyProvider|NWConnection' apps; then
-            echo 'Forbidden tunneling API found.' >&2
+          rg -n 'android\.net\.VpnService' apps/android/app/src/main/java/com/fool/ipbatch/SystemVpnService.java
+          rg -n 'android\.permission\.BIND_VPN_SERVICE' apps/android/app/src/main/AndroidManifest.xml
+          rg -n 'protect\(fd\)' apps/android/app/src/main/java/com/fool/ipbatch/SystemVpnService.java
+          rg -n '拒绝私网/保留节点服务器|节点域名解析到私网/保留地址' apps/android/app/src/main/java/com/fool/ipbatch/SingBoxConfigBuilder.java
+          if rg -n 'SystemVpnService|CommandServer|startOrReloadService' \
+              apps/android/app/src/main/java/com/fool/ipbatch/SubscriptionParser.java \
+              apps/android/app/src/main/java/com/fool/ipbatch/SubscriptionResolver.java \
+              apps/android/app/src/main/java/com/fool/ipbatch/ScanForegroundService.java; then
+            echo 'Ordinary subscription path references real VPN APIs.' >&2
+            exit 1
+          fi
+          if rg -n 'NEPacketTunnelProvider|NEDNSProxyProvider' apps/ios; then
+            echo 'iOS tunnel APIs are not implemented in this Android-only milestone.' >&2
             exit 1
           fi
       - name: Validate userscript syntax and no node-connection primitives

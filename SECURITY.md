@@ -18,9 +18,9 @@ Ordinary subscription inspection must never connect to a node's declared port, p
 
 ## Explicit real-test boundary
 
-Real subscription testing is a separate, opt-in command/UI action. It does not implement any proxy protocol or connect to a subscription endpoint. It may only contact a Mihomo/Clash-compatible controller on HTTP loopback (`127.0.0.1`, `localhost` or `::1`), confirm TUN is enabled, match subscription node display names to controller nodes, switch one policy group and issue ordinary web requests through the already-running system VPN. Remote controllers, URL credentials and controller paths are rejected.
+Android real subscription testing is a separate, opt-in action gated by an impact checkbox and Android's VPN consent UI. It embeds sing-box/libbox, converts selected subscription credentials in memory, rejects node hosts with any private/reserved DNS answer, and establishes a full-device TUN. Core outbound descriptors must pass `VpnService.protect(fd)`; failure aborts instead of risking a routing loop. Other platforms retain the 5.x loopback Mihomo-controller design.
 
-The original selection is restored in a `finally`/defer path in normal mode. Restoration is best effort: process termination, controller failure or VPN shutdown can leave the last test node selected. Browser mode explicitly requires one node and deliberately leaves it selected. Switching a shared group can affect other device traffic, so every UI presents that effect before starting.
+Normal Android completion, error, cancellation and VPN revocation close the command server and TUN descriptor. Browser mode requires one exact node and deliberately holds the VPN until the user presses the notification action. Android permits only one active VPN, and the full-device route can affect every app, so the UI states that effect before requesting consent.
 
 Real-test targets must resolve entirely to public addresses. HTTPS is the default and only option in graphical clients/userscript; the CLI requires a separate flag for public HTTP. Automated probes send no browser cookie, account credential, API key or chat message and cap response bodies. A login redirect is not classified as a geographic block.
 

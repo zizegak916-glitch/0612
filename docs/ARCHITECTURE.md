@@ -14,8 +14,8 @@ flowchart TD
   X --> E
   D["Detailed mode: one public IP"] --> I
   D --> T["Explicit TLS port"]
-  S["Real-test opt-in"] --> M["Loopback Mihomo controller"]
-  M --> V["Existing system VPN"]
+  S["Android real-test opt-in"] --> M["Embedded libbox"]
+  M --> V["Android VpnService TUN"]
   V --> A["Conversation/custom URLs"]
 ```
 
@@ -37,7 +37,7 @@ Detailed mode accepts exactly one public address. Passive registration, routing,
 
 ## Real subscription test flow
 
-The real-test branch deliberately starts after the ordinary safe parser. Node display names are intersected with a selectable group returned by a loopback Mihomo/Clash API. After TUN is confirmed, the tester records the baseline exit, switches a node, reads the group back to confirm it, records the new exit and sends capped anonymous requests to validated public conversation/custom URLs. The original node is restored in normal completion and error paths when the controller remains reachable. No proxy core or protocol credential is bundled.
+On Android, the real-test branch is reachable only after a separate impact checkbox and OS VPN consent. It downloads the subscription before TUN creation, converts one node at a time to an isolated sing-box configuration, rejects private/reserved node resolutions, establishes the TUN through `VpnService.Builder`, and passes outbound socket descriptors through `protect(fd)`. Capped anonymous requests then reach validated public conversation/custom URLs. Normal completion, error, cancellation and VPN revocation close the core and descriptor. Other platforms retain the 5.x loopback Mihomo-controller implementation.
 
 ## AI conclusions
 

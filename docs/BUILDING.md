@@ -27,7 +27,7 @@ Linux 在生成 `dist/IPBatchInspector` 与 `dist/ipbatch-cli` 后可打 DEB 和
 
 ## Android
 
-`apps/android/build.sh` downloads the official Android 35 platform/build tools and Eclipse compiler into an ignored local toolchain directory and runs parser/downloader tests. Without signing variables it creates an installable debug APK and an unsigned audit APK. A public release must use a separately protected signing key; the repository never contains one.
+`apps/android/build.sh` downloads the official Android 35 platform/build tools and Eclipse compiler, plus fixed Go 1.25.5 and Android NDK r28 inputs. It checks out sing-box 1.14.0 at commit `0b8995879f29a9b98ee027bc17b75e101445b238`, builds a four-ABI libbox AAR, runs parser/config/downloader tests, and packages the native `.so` files. Without signing variables it creates an installable debug APK and an unsigned audit APK. A public release must use a separately protected signing key; the repository never contains one.
 
 ```bash
 cd apps/android
