@@ -21,7 +21,7 @@ from .models import IntelResult, SourceEvidence
 
 
 DEFAULT_SOURCES = ("ipapi", "proxycheck", "geojs", "rdap", "ripestat")
-USER_AGENT = "IPBatchInspector/5.0 (+https://github.com/zizegak916-glitch/0612)"
+USER_AGENT = "IPBatchInspector/6.0.0-alpha.2 (+https://github.com/zizegak916-glitch/0612)"
 MAX_RESPONSE = 2 * 1024 * 1024
 SOURCE_CONCURRENCY = {"ipapi": 4, "proxycheck": 4, "geojs": 8, "rdap": 1, "ripestat": 8, "ping0": 4, "cngeo": 2}
 SOURCE_INTERVALS = {"rdap": 1.05}

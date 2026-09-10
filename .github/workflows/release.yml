@@ -85,9 +85,12 @@ jobs:
       - run: python -m build
       - name: Stage terminal packages and scripts
         run: |
-          mkdir -p release script-bundle
+          mkdir -p release script-bundle/src script-bundle/packaging
           cp dist/*.whl dist/*.tar.gz release/
-          cp -R scripts src pyproject.toml README.md LICENSE script-bundle/
+          cp -R scripts pyproject.toml README.md LICENSE monitor.example.json script-bundle/
+          cp -R src/ipbatch_inspector script-bundle/src/
+          cp -R packaging/systemd script-bundle/packaging/
+          test -f script-bundle/packaging/systemd/ipbatch-monitor.service
           (cd script-bundle && zip -qr "../release/IPBatchInspector-$IPBATCH_VERSION-terminal-scripts.zip" .)
           cp userscript/IPBatchInspector.user.js "release/IPBatchInspector-$IPBATCH_VERSION.user.js"
       - uses: actions/upload-artifact@v4

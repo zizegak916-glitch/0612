@@ -1,5 +1,22 @@
 # Changelog
 
+## 6.0.0-alpha.2
+
+- Withdraw the failed alpha.1 VPN experiment and remove Android `VpnService`, sing-box/libbox, all external-controller integrations, route switching and real subscription tests on every platform.
+- Make subscription visibility explicit: only public IP literals directly exposed in node `server` fields enter IP intelligence; domain A/AAAA results are separate DNS infrastructure observations; hidden relay/landing/chain exits remain unobservable.
+- Replace country-list AI verdicts with evidence-only assessments. Current-route probes report anonymous HTTP/transport facts, geolocation and policy scopes stay separate, and Hong Kong is never labeled unsupported from `country_code=HK`.
+- Keep single-IP detailed investigation, current exit detection, secure saved subscription URLs, Android foreground data-sync tasks and Windows/Linux user-level monitoring.
+- Restore the MIT license after removal of the embedded GPL component.
+
+## 6.0.0-alpha.1
+
+- **Withdrawn:** this experimental release failed device testing and its VPN capability was removed in 6.0.0-alpha.2.
+- Replace Android's external-controller real test with an embedded sing-box/libbox `VpnService`, including OS consent, full-device TUN, protected core sockets, foreground lifetime and notification cancellation.
+- Convert common sing-box JSON, Clash/Mihomo YAML and mainstream proxy URIs into per-node temporary configurations; preserve common detour chains and truthfully reject SSR/plugins or formats not safely mapped.
+- Reject private/reserved node targets and public-to-private mixed DNS answers before TUN creation; keep ordinary subscription inspection on its no-node-connection path.
+- Rebuild single-IP investigation around parallel passive sources, retry and direct-RIR RDAP fallback, structured current-owner fields, verified SNI certificate observations and a per-source health matrix.
+- Raise Android minimum to API 24 and switch the project license to GPL-3.0-or-later for embedded sing-box compatibility.
+
 ## 5.0.0
 
 - Add single-public-IP detailed investigation with expanded RDAP entities, RIPEstat registration/routing/abuse/visibility, Shodan InternetDB, GreyNoise, PTR and explicit-port TLS certificate capture.

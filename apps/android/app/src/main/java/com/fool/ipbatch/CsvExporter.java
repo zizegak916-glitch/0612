@@ -16,7 +16,7 @@ public final class CsvExporter {
                 row(out, r.ip, r.origin, r.status, r.riskScore == null ? "" : String.valueOf(r.riskScore), r.riskSource,
                         r.country, r.countryCode, r.region, r.city, r.coordinates, r.timezone, r.asn, r.org, r.networkType, yn(r.riskEvaluated),
                         yn(r.vpn), yn(r.proxy), yn(r.tor), yn(r.datacenter), yn(r.abuser), yn(r.mobile),
-                        r.nativeIp == null ? "未知" : yn(r.nativeIp), AiPolicyEvaluator.evaluate(r), r.registration, r.routing, r.freshness,
+                        r.nativeIp == null ? "未知" : yn(r.nativeIp), AiEvidenceEvaluator.evaluate(r), r.registration, r.routing, r.freshness,
                         r.confidence, r.signalSummary, IpResult.join(r.conflicts, " | "),
                         String.valueOf(r.successfulSources), String.valueOf(r.durationMs()),
                         IpResult.join(r.sourceEvidence, " | "), IpResult.join(r.sourceDetails, " | "), IpResult.join(r.errors, " | "));

@@ -12,13 +12,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-/** Resolves node host names to addresses. It performs DNS only and never connects to node ports. */
+/** Separates IP literals exposed by a subscription from domain DNS observations. */
 public final class SubscriptionResolver {
     public static final int MAX_UNIQUE_IPS = 500;
 
     public static final class Report {
         public final List<String> ips = new ArrayList<>();
         public final Map<String, String> origins = new LinkedHashMap<>();
+        public final Map<String, List<String>> dnsObservations = new LinkedHashMap<>();
         public final List<String> unresolved = new ArrayList<>();
         public int literalHosts;
         public int domainHosts;
@@ -27,8 +28,9 @@ public final class SubscriptionResolver {
         public boolean truncated;
 
         public String summary() {
-            return "唯一公网 IP " + ips.size() + "；IP 节点 " + literalHosts + "；域名节点 " + domainHosts
-                    + "；DNS 返回地址 " + dnsAddresses
+            return "原文直露公网 IP " + ips.size() + "；IP 字面量节点 " + literalHosts + "；仅域名节点 " + domainHosts
+                    + "；DNS 入口观察地址 " + dnsAddresses + "（不作为节点或出口 IP 调查）"
+                    + "；可从订阅证明的真实流量出口 0"
                     + (unresolved.isEmpty() ? "" : "；解析失败 " + unresolved.size())
                     + (privateAddresses == 0 ? "" : "；本地拦截 " + privateAddresses)
                     + (truncated ? "；已达到 500 个 IP 上限" : "");
@@ -64,10 +66,7 @@ public final class SubscriptionResolver {
             }
             report.domainHosts++;
             Integer seen = perHost.get(node.host);
-            if (seen != null) {
-                mergeExistingOrigin(node.host, node, report);
-                continue;
-            }
+            if (seen != null) continue;
             perHost.put(node.host, 1);
             try {
                 DnsAnswer answer = lookups.get(node.host).get();
@@ -77,8 +76,10 @@ public final class SubscriptionResolver {
                 for (InetAddress address : addresses) {
                     String normalized = IpParser.normalize(address.getHostAddress());
                     if (normalized == null) continue;
-                    report.dnsAddresses++;
-                    accept(normalized, node, report, unique);
+                    if (!IpParser.isPublic(normalized)) { report.privateAddresses++; continue; }
+                    List<String> observed = report.dnsObservations.get(node.host);
+                    if (observed == null) { observed = new ArrayList<>(); report.dnsObservations.put(node.host, observed); }
+                    if (!observed.contains(normalized)) { observed.add(normalized); report.dnsAddresses++; }
                 }
             } catch (Exception e) {
                 if (report.unresolved.size() < 80) report.unresolved.add(node.label() + "：" + safe(e));
@@ -105,15 +106,6 @@ public final class SubscriptionResolver {
             int count = existing.split("\\n").length;
             if (count < 6) report.origins.put(ip, existing + "\n" + label);
             else if (!existing.endsWith("…更多节点")) report.origins.put(ip, existing + "\n…更多节点");
-        }
-    }
-
-    private static void mergeExistingOrigin(String host, SubscriptionParser.NodeEndpoint node, Report report) {
-        for (Map.Entry<String, String> entry : report.origins.entrySet()) {
-            if (entry.getValue().contains(" @ " + host)) {
-                String value = entry.getValue();
-                if (!value.contains(node.label()) && value.split("\\n").length < 6) entry.setValue(value + "\n" + node.label());
-            }
         }
     }
 

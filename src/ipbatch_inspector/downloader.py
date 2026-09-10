@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit
 
 MAX_BODY = 5 * 1024 * 1024
 MAX_REDIRECTS = 4
-USER_AGENT = "IPBatchInspector/5.0 (+https://github.com/zizegak916-glitch/0612)"
+USER_AGENT = "IPBatchInspector/6.0.0-alpha.2 (+https://github.com/zizegak916-glitch/0612)"
 
 
 class DownloadPolicyError(RuntimeError):

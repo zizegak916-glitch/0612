@@ -7,7 +7,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from .iptools import resolve_node_host
+from .iptools import is_public_ip, normalize_ip, resolve_node_host
 from .models import NodeEndpoint, SubscriptionReport
 
 
@@ -335,11 +335,30 @@ class SubscriptionParser:
 
 
 def resolve_nodes(nodes: list[NodeEndpoint], max_ips: int = 500, workers: int = 24) -> dict[str, object]:
-    """Map nodes to public IPs. Ports are deliberately never passed to the resolver."""
-    origins: dict[str, list[dict[str, object]]] = {}
+    """Separate literal subscription IPs from DNS observations.
+
+    Only public IP literals directly present in node ``server`` fields are returned
+    as investigable IPs. DNS answers are retained as infrastructure observations;
+    they are never promoted to node or exit IPs. Ports are never passed to DNS.
+    """
+    direct_origins: dict[str, list[dict[str, object]]] = {}
+    dns_observations: dict[str, dict[str, object]] = {}
     local_addresses: dict[str, list[str]] = {}
     errors: dict[str, str] = {}
-    hosts = list(dict.fromkeys(node.host for node in nodes))
+    domain_nodes: list[NodeEndpoint] = []
+    for node in nodes:
+        try:
+            literal = normalize_ip(node.host)
+        except ValueError:
+            domain_nodes.append(node)
+            continue
+        if is_public_ip(literal):
+            if len(direct_origins) < max_ips or literal in direct_origins:
+                direct_origins.setdefault(literal, []).append(node.redacted_dict())
+        else:
+            local_addresses.setdefault(node.host, []).append(literal)
+
+    hosts = list(dict.fromkeys(node.host for node in domain_nodes))
     resolved: dict[str, tuple[list[str], list[str]]] = {}
     with ThreadPoolExecutor(max_workers=max(1, min(workers, 32))) as pool:
         futures = {pool.submit(resolve_node_host, host): host for host in hosts}
@@ -350,26 +369,31 @@ def resolve_nodes(nodes: list[NodeEndpoint], max_ips: int = 500, workers: int = 
             except OSError as exc:
                 errors[host] = str(exc)
 
-    for node in nodes:
+    for node in domain_nodes:
         answer = resolved.get(node.host)
         if answer is None:
             continue
         public, local = answer
         if local:
             local_addresses[node.host] = local
-        for ip in public:
-            if len(origins) >= max_ips and ip not in origins:
-                break
-            origins.setdefault(ip, []).append(node.redacted_dict())
-        if len(origins) >= max_ips:
-            # Continue only while existing IPs may need their origin-node mapping.
-            continue
+        observation = dns_observations.setdefault(node.host, {
+            "addresses": public,
+            "nodes": [],
+            "meaning": "DNS entry/infrastructure observation only; not a proven proxy endpoint, landing IP, or traffic exit",
+        })
+        observation["nodes"].append(node.redacted_dict())
     return {
-        "public_ips": list(origins),
-        "origins": origins,
+        "direct_exposed_public_ips": list(direct_origins),
+        "direct_origins": direct_origins,
+        "public_ips": list(direct_origins),
+        "origins": direct_origins,
+        "dns_observations": dns_observations,
+        "domain_only_node_count": len(domain_nodes),
+        "unobservable_exit_count": len(nodes),
         "local_addresses": local_addresses,
         "dns_errors": errors,
-        "truncated": len(origins) >= max_ips,
+        "truncated": len(direct_origins) >= max_ips,
+        "boundary": "only public IP literals directly exposed by subscription node server fields are investigated; DNS answers and hidden relay/landing/chain exits are not tested",
     }
 
 

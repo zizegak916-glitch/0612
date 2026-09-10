@@ -92,7 +92,7 @@ class IntelResult:
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     confidence: dict[str, Any] = field(default_factory=dict)
     evidence: list[SourceEvidence] = field(default_factory=list)
-    ai_policy: dict[str, str] = field(default_factory=dict)
+    ai_assessment: dict[str, str] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

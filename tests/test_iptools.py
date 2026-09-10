@@ -25,7 +25,18 @@ class IpToolsTest(unittest.TestCase):
         node = NodeEndpoint("vless", "demo", "node.example", 443)
         result = resolve_nodes([node])
         resolver.assert_called_once_with("node.example")
-        self.assertEqual(["1.1.1.1"], result["public_ips"])
+        self.assertEqual([], result["direct_exposed_public_ips"])
+        self.assertEqual(["1.1.1.1"], result["dns_observations"]["node.example"]["addresses"])
+        self.assertIn("not a proven", result["dns_observations"]["node.example"]["meaning"])
+
+    def test_only_literal_subscription_ips_are_investigated(self):
+        nodes = [
+            NodeEndpoint("vless", "literal", "1.1.1.1", 443),
+            NodeEndpoint("vless", "private", "10.0.0.1", 443),
+        ]
+        result = resolve_nodes(nodes)
+        self.assertEqual(["1.1.1.1"], result["direct_exposed_public_ips"])
+        self.assertEqual(2, result["unobservable_exit_count"])
 
 
 if __name__ == "__main__":

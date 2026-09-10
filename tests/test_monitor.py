@@ -27,13 +27,9 @@ class MonitorTest(unittest.TestCase):
         run_action({"mode": "detail", "targets": ["1.1.1.1"], "tls_ports": [443]})
         investigate.assert_called_once()
 
-    @patch("ipbatch_inspector.monitor.real_subscription_test")
-    @patch("ipbatch_inspector.monitor.load_saved", return_value="https://sub.example/token")
-    def test_background_realtest_uses_saved_url_and_never_opens_browser(self, load_saved, test):
-        test.return_value = {"results": []}
-        run_action({"mode": "realtest", "saved_subscription": "primary", "nodes": ["node-a"]})
-        load_saved.assert_called_once_with("primary")
-        self.assertFalse(test.call_args.kwargs["open_browser"])
+    def test_removed_realtest_mode_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "must be"):
+            run_action({"mode": "realtest", "saved_subscription": "primary"})
 
 
 if __name__ == "__main__":

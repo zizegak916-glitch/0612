@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ipbatch-inspector"
-version = "5.0.0"
-description = "Cross-platform IP intelligence, safe subscription inspection and explicit system-VPN route testing"
+version = "6.0.0a2"
+description = "Cross-platform IP intelligence and read-only subscription investigation without VPN or proxy connections"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "IPBatchInspector contributors" }]
 keywords = ["ip", "asn", "rdap", "subscription", "clash", "network", "security"]
 classifiers = [
-  "Development Status :: 5 - Production/Stable",
+  "Development Status :: 3 - Alpha",
   "Environment :: Console",
   "Environment :: Win32 (MS Windows)",
   "Environment :: X11 Applications",

@@ -2,7 +2,6 @@ import Foundation
 import Network
 import CryptoKit
 import Security
-import UIKit
 
 enum NetworkError: LocalizedError {
     case policy(String)
@@ -33,7 +32,7 @@ private final class SafeTextLoader: NSObject, URLSessionDataDelegate, URLSession
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = 15
             configuration.timeoutIntervalForResource = 30
-            configuration.httpAdditionalHeaders = ["User-Agent": "IPBatchInspector/5.0"]
+            configuration.httpAdditionalHeaders = ["User-Agent": "IPBatchInspector/6.0.0-alpha.2"]
             let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
             self.session = session
             session.dataTask(with: url).resume()
@@ -139,27 +138,8 @@ private final class NoRedirectSession: NSObject, URLSessionTaskDelegate {
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
 
-private struct RealProbeObservation: Sendable {
-    let name: String
-    let url: String
-    let httpStatus: Int?
-    let verdict: String
-    let location: String
-    let error: String
-    let elapsedMilliseconds: Int
-
-    var dictionary: [String: Any] {
-        var value: [String: Any] = ["name": name, "url": url, "verdict": verdict,
-                                    "elapsed_ms": elapsedMilliseconds, "cookies_or_credentials_sent": false]
-        if let httpStatus { value["http"] = httpStatus }
-        if !location.isEmpty { value["location"] = location }
-        if !error.isEmpty { value["error"] = error }
-        return value
-    }
-}
-
 enum NetworkService {
-    private static let userAgent = "IPBatchInspector/5.0"
+    private static let userAgent = "IPBatchInspector/6.0.0-alpha.2"
     private static let iso = ISO8601DateFormatter()
 
     static func inspectSubscription(_ text: String, allowPrivate: Bool) async throws -> SubscriptionResult {
@@ -203,7 +183,7 @@ enum NetworkService {
         }
         var seenNodes = Set<String>()
         nodes = Array(nodes.filter { seenNodes.insert("\($0.protocolName)|\($0.host)|\($0.port ?? 0)").inserted }.prefix(1500))
-        let uniqueHosts = Array(Set(nodes.map(\.host))).sorted()
+        let uniqueHosts = Array(Set(nodes.map(\.host).filter { !IPRules.isLiteral($0) })).sorted()
         var hostAnswers: [String: [String]] = [:]
         for start in stride(from: 0, to: uniqueHosts.count, by: 32) {
             let end = min(start + 32, uniqueHosts.count)
@@ -222,18 +202,31 @@ enum NetworkService {
                 }
             }
         }
-        var publicIPs: [String] = []
+        var directPublicIPs: [String] = []
+        var dnsObservations: [String: [String]] = [:]
         var local: [String] = []
         for node in nodes {
+            if IPRules.isLiteral(node.host) {
+                if IPRules.isPublic(node.host) {
+                    if !directPublicIPs.contains(node.host) && directPublicIPs.count < 500 { directPublicIPs.append(node.host) }
+                } else if !local.contains(node.host) { local.append(node.host) }
+                continue
+            }
             for address in hostAnswers[node.host] ?? [] {
                 if IPRules.isPublic(address) {
-                    if !publicIPs.contains(address) && publicIPs.count < 500 { publicIPs.append(address) }
+                    var observed = dnsObservations[node.host] ?? []
+                    if !observed.contains(address) { observed.append(address) }
+                    dnsObservations[node.host] = observed
                 } else if !local.contains(address) { local.append(address) }
             }
         }
         let counts = Dictionary(grouping: nodes, by: \.protocolName).mapValues(\.count)
-        let intelligence = await scanIPs(publicIPs.joined(separator: "\n"))
-        return SubscriptionResult(nodeCount: nodes.count, protocolCounts: counts, nodes: nodes, publicIPs: publicIPs, localOrReserved: local, intelligence: intelligence, warnings: warnings, rawContentPersisted: false, networkBoundary: "Downloaded subscription/provider text, used OS DNS and queried public-IP intelligence only; no node port was connected.")
+        let intelligence = await scanIPs(directPublicIPs.joined(separator: "\n"))
+        return SubscriptionResult(nodeCount: nodes.count, protocolCounts: counts, nodes: nodes,
+                                  directExposedPublicIPs: directPublicIPs, dnsObservations: dnsObservations,
+                                  unobservableExitNodeCount: nodes.count, localOrReserved: local,
+                                  intelligence: intelligence, warnings: warnings, rawContentPersisted: false,
+                                  networkBoundary: "Only public IP literals directly exposed in subscription server fields were investigated. Domain DNS answers are infrastructure observations, not node or exit IPs. Hidden relay, landing, chain, CDN and traffic exits are unobservable. No node port was connected.")
     }
 
     static func detectExit() async -> [[String: String]] {
@@ -571,163 +564,6 @@ enum NetworkService {
         """
     }
 
-    static func realSubscriptionTest(subscriptionURL: String, controllerURL: String, secret: String,
-                                     requestedNode: String, customTargets: String, openBrowser: Bool) async throws -> String {
-        let controller = try validatedController(controllerURL)
-        let configuration = try await controllerJSON(controller, path: "/configs", secret: secret)
-        let tun = configuration["tun"] as? [String: Any]
-        guard tun?["enable"] as? Bool == true || configuration["tun"] as? Bool == true else {
-            throw NetworkError.policy("The loopback controller is reachable, but /configs reports TUN disabled. Enable the iOS system VPN first.")
-        }
-        let version = try await controllerJSON(controller, path: "/version", secret: secret)
-        let subscription = try await inspectSubscription(subscriptionURL, allowPrivate: false)
-        let subscriptionNames = Set(subscription.nodes.map(\.name).filter { !$0.isEmpty })
-        guard !subscriptionNames.isEmpty else { throw NetworkError.response("Subscription exposed no node names for controller matching.") }
-        let proxyRoot = try await controllerJSON(controller, path: "/proxies", secret: secret)
-        guard let proxies = proxyRoot["proxies"] as? [String: Any] else { throw NetworkError.response("Controller did not return a proxies object.") }
-        let group = try selectGroup(proxies, subscriptionNames: subscriptionNames)
-        let exact = requestedNode.trimmingCharacters(in: .whitespacesAndNewlines)
-        let selected: [String]
-        if !exact.isEmpty {
-            guard group.nodes.contains(exact) else { throw NetworkError.policy("Requested node is not present in both subscription and controller group.") }
-            selected = [exact]
-        } else { selected = Array(group.nodes.prefix(20)) }
-        guard !selected.isEmpty else { throw NetworkError.response("No matching controller nodes.") }
-        if openBrowser && selected.count != 1 { throw NetworkError.policy("Browser mode requires one exact node name.") }
-        let targets = try await realTargets(customTargets)
-        let baseline = await detectExit()
-        var nodeReports: [[String: Any]] = []
-        var restored = false
-        var restoreError = ""
-        do {
-            for node in selected {
-                _ = try await controllerJSON(controller, path: "/proxies/\(group.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? group.name)", secret: secret, method: "PUT", body: ["name": node])
-                try await Task.sleep(nanoseconds: 1_400_000_000)
-                let currentRoot = try await controllerJSON(controller, path: "/proxies", secret: secret)
-                let currentProxies = currentRoot["proxies"] as? [String: Any]
-                let currentGroup = currentProxies?[group.name] as? [String: Any]
-                let actual = currentGroup?["now"] as? String ?? ""
-                if actual != node { nodeReports.append(["node": node, "switch_ok": false, "actual": actual]); continue }
-                let exit = await detectExit()
-                var observations: [RealProbeObservation] = []
-                await withTaskGroup(of: RealProbeObservation.self) { taskGroup in
-                    for target in targets { taskGroup.addTask { await realProbe(target) } }
-                    for await check in taskGroup { observations.append(check) }
-                }
-                let checks = observations.map(\.dictionary)
-                nodeReports.append(["node": node, "switch_ok": true, "exit": exit, "targets": checks.sorted { String(describing: $0["url"] ?? "") < String(describing: $1["url"] ?? "") }])
-            }
-        } catch {
-            if !openBrowser && !group.original.isEmpty {
-                do { _ = try await controllerJSON(controller, path: "/proxies/\(group.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? group.name)", secret: secret, method: "PUT", body: ["name": group.original]); restored = true }
-                catch { restoreError = error.localizedDescription }
-            }
-            throw error
-        }
-        if !openBrowser && !group.original.isEmpty {
-            do { _ = try await controllerJSON(controller, path: "/proxies/\(group.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? group.name)", secret: secret, method: "PUT", body: ["name": group.original]); restored = true }
-            catch { restoreError = error.localizedDescription }
-        }
-        if openBrowser {
-            await MainActor.run { for target in targets { UIApplication.shared.open(target.url) } }
-        }
-        let report: [String: Any] = [
-            "mode": "real-subscription-system-vpn-test", "controller": controller.absoluteString,
-            "controller_version": version, "tun_reported_enabled": true, "group": group.name,
-            "original_node": group.original, "original_restored": restored,
-            "left_test_node_for_browser": openBrowser, "restore_error": restoreError,
-            "subscription_node_count": subscription.nodeCount, "matched_nodes": group.nodes.count,
-            "baseline_exit": baseline, "results": nodeReports,
-            "semantics": ["conversation_urls": true, "cookies_or_credentials_sent": false, "messages_sent": false,
-                          "note": "Login redirects prove reachability, not geo-blocking. iOS does not expose another app's full VPN state; TUN is confirmed by the local controller and route evidence by exit checks."],
-            "warning": "Changing the controller group affects other traffic. Split-tunnel rules may route domains differently. Subscription content and controller secret are not persisted."
-        ]
-        return prettyObject(report)
-    }
-
-    private static func validatedController(_ value: String) throws -> URL {
-        let raw = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "http://127.0.0.1:9090" : value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: raw), url.scheme == "http", let host = url.host?.lowercased(), ["127.0.0.1", "::1", "localhost"].contains(host), url.port != nil,
-              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else {
-            throw NetworkError.policy("Controller must be loopback HTTP, for example http://127.0.0.1:9090.")
-        }
-        return url
-    }
-
-    private static func controllerJSON(_ base: URL, path: String, secret: String, method: String = "GET", body: [String: Any]? = nil) async throws -> [String: Any] {
-        guard let url = URL(string: path, relativeTo: base)?.absoluteURL else { throw NetworkError.policy("Invalid controller path.") }
-        var request = URLRequest(url: url); request.httpMethod = method; request.timeoutInterval = 8
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if !secret.isEmpty { request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization") }
-        if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.connectionProxyDictionary = [:]
-        let delegate = NoRedirectSession()
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
-        let (data, response) = try await session.data(for: request)
-        session.invalidateAndCancel()
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), data.count <= 4 * 1024 * 1024 else { throw NetworkError.response("Local controller rejected or oversized the request.") }
-        if data.isEmpty { return [:] }
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw NetworkError.response("Controller returned non-object JSON.") }
-        return object
-    }
-
-    private static func selectGroup(_ proxies: [String: Any], subscriptionNames: Set<String>) throws -> (name: String, original: String, nodes: [String]) {
-        var best: (String, String, [String])?
-        for (name, raw) in proxies {
-            guard let item = raw as? [String: Any], let all = item["all"] as? [String] else { continue }
-            let overlap = all.filter(subscriptionNames.contains)
-            if !overlap.isEmpty && (best == nil || overlap.count > best!.2.count) { best = (name, item["now"] as? String ?? "", overlap) }
-        }
-        guard let best else { throw NetworkError.response("No selectable policy group contains names from this subscription.") }
-        return (best.0, best.1, best.2)
-    }
-
-    private static func realTargets(_ custom: String) async throws -> [(name: String, url: URL)] {
-        var raw = [("ChatGPT", "https://chatgpt.com/"), ("Claude", "https://claude.ai/new"), ("Gemini", "https://gemini.google.com/app"),
-                   ("AI Studio", "https://aistudio.google.com/app/prompts/new_chat"), ("Grok", "https://grok.com/"),
-                   ("Perplexity", "https://www.perplexity.ai/"), ("Copilot", "https://copilot.microsoft.com/"),
-                   ("DeepSeek", "https://chat.deepseek.com/"), ("Qwen", "https://chat.qwen.ai/")]
-        raw += custom.components(separatedBy: CharacterSet(charactersIn: ",\n")).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map { ("Custom", $0.contains("://") ? $0.trimmingCharacters(in: .whitespaces) : "https://" + $0.trimmingCharacters(in: .whitespaces)) }
-        guard raw.count <= 24 else { throw NetworkError.policy("At most 24 real-test targets are allowed.") }
-        var result: [(String, URL)] = []
-        for item in raw {
-            guard let url = URL(string: item.1), url.scheme == "https", url.user == nil, url.password == nil, let host = url.host else { throw NetworkError.policy("Targets must be credential-free HTTPS public URLs.") }
-            let addresses = try IPRules.resolve(host)
-            guard !addresses.isEmpty, addresses.allSatisfy(IPRules.isPublic) else { throw NetworkError.policy("Target resolves to private/reserved address: \(host)") }
-            if !result.contains(where: { $0.1 == url }) { result.append((item.0, url)) }
-        }
-        return result
-    }
-
-    private static func realProbe(_ target: (name: String, url: URL)) async -> RealProbeObservation {
-        let started = Date(); let delegate = NoRedirectSession(); let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 12; configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
-        do {
-            var request = URLRequest(url: target.url); request.setValue("Mozilla/5.0 (iOS; IPBatchInspector real-route probe)", forHTTPHeaderField: "User-Agent")
-            let (data, response) = try await session.data(for: request); session.invalidateAndCancel()
-            let http = response as? HTTPURLResponse; let status = http?.statusCode ?? 0
-            let location = http?.value(forHTTPHeaderField: "Location") ?? ""; let body = String(decoding: data.prefix(32768), as: UTF8.self).lowercased()
-            let combined = (location + "\n" + body).lowercased(); let verdict: String
-            if ["unsupported country", "unsupported region", "not available in your country", "not available in your region", "地区不可用"].contains(where: combined.contains) { verdict = "geo_blocked" }
-            else if status == 429 { verdict = "rate_limited" }
-            else if status >= 500 { verdict = "upstream_error" }
-            else if [401, 407].contains(status) { verdict = "authentication_required" }
-            else if (300..<400).contains(status) { verdict = location.range(of: "login|signin|auth|account", options: .regularExpression) == nil ? "redirect" : "authentication_required" }
-            else if (200..<400).contains(status) { verdict = "reachable" }
-            else { verdict = "blocked_or_rejected" }
-            return RealProbeObservation(name: target.name, url: target.url.absoluteString, httpStatus: status,
-                                        verdict: verdict, location: location, error: "",
-                                        elapsedMilliseconds: Int(Date().timeIntervalSince(started) * 1000))
-        } catch {
-            session.invalidateAndCancel()
-            return RealProbeObservation(name: target.name, url: target.url.absoluteString, httpStatus: nil,
-                                        verdict: "network_error", location: "", error: error.localizedDescription,
-                                        elapsedMilliseconds: Int(Date().timeIntervalSince(started) * 1000))
-        }
-    }
-
     private static func fetchData(_ address: String, accepted: Set<Int>) async throws -> (Data, Int) {
         var request = URLRequest(url: URL(string: address)!); request.setValue(userAgent, forHTTPHeaderField: "User-Agent"); request.timeoutInterval = 12
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -746,24 +582,34 @@ enum NetworkService {
     }
 
     private static func entranceEvidence(name: String, kind: String, address: String) async -> EntranceResult {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.timeoutIntervalForRequest = 12
+        let session = URLSession(configuration: configuration, delegate: NoRedirectSession(), delegateQueue: nil)
         do {
             var request = URLRequest(url: URL(string: address)!)
             request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
             request.setValue("text/html,application/json", forHTTPHeaderField: "Accept")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let (data, response) = try await session.data(for: request)
+            session.invalidateAndCancel()
+            let http = response as? HTTPURLResponse
+            let code = http?.statusCode ?? 0
             let body = String(decoding: data.prefix(32768), as: UTF8.self).lowercased()
             let explicitRegion = body.contains("not available in your country") || body.contains("unsupported country") || body.contains("not available in your region")
             let status: String
             let detail: String
-            if explicitRegion { status = "region-blocked"; detail = "Response explicitly reported an unsupported country/region." }
-            else if (200..<400).contains(code) { status = "reachable"; detail = "Public entrance returned a normal response." }
-            else if kind == "api" && [400, 401, 403].contains(code) { status = "reachable-auth-required"; detail = "API entrance responded; no credential was sent." }
-            else if code == 403 { status = "restricted-or-challenged"; detail = "403 may be policy, WAF, anti-bot or IP reputation; not a proven geo-block." }
-            else { status = "failed"; detail = "HTTP \(code)" }
+            if explicitRegion { status = "explicit-region-message-observed"; detail = "This anonymous response contained an unavailable-region phrase; it is a time-scoped observation, not a permanent country verdict." }
+            else if (200..<300).contains(code) { status = "http-response-observed"; detail = "The anonymous entrance returned content; login and conversation capability were not tested." }
+            else if (300..<400).contains(code) { status = "redirect-observed"; detail = "HTTP \(code) to \(http?.value(forHTTPHeaderField: "Location") ?? "unknown"); the redirect was not followed." }
+            else if kind == "api" && [400, 401, 403].contains(code) { status = "authentication-response-observed"; detail = "The API frontend responded without credentials; model access was not tested." }
+            else if code == 403 { status = "denial-or-challenge-observed"; detail = "403 may be policy, WAF, anti-bot or IP reputation; the cause is unproven." }
+            else if code == 429 { status = "rate-limit-response-observed"; detail = "The entrance returned rate limiting; account and model access were not tested." }
+            else { status = "other-http-response-observed"; detail = "HTTP \(code); it is not attributed to a country without explicit evidence." }
             return EntranceResult(name: name, kind: kind, host: URL(string: address)!.host ?? "", httpCode: code, status: status, detail: detail, checkedAt: iso.string(from: Date()))
         } catch {
-            return EntranceResult(name: name, kind: kind, host: URL(string: address)!.host ?? "", httpCode: nil, status: "network-error", detail: error.localizedDescription, checkedAt: iso.string(from: Date()))
+            session.invalidateAndCancel()
+            return EntranceResult(name: name, kind: kind, host: URL(string: address)!.host ?? "", httpCode: nil, status: "transport-failure", detail: error.localizedDescription, checkedAt: iso.string(from: Date()))
         }
     }
 

@@ -3,6 +3,10 @@ import Foundation
 import Network
 
 enum IPRules {
+    static func isLiteral(_ value: String) -> Bool {
+        IPv4Address(value) != nil || IPv6Address(value) != nil
+    }
+
     static func isPublic(_ value: String) -> Bool {
         if let address = IPv4Address(value) {
             let bytes = [UInt8](address.rawValue)

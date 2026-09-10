@@ -8,7 +8,7 @@ SCRIPT = (Path(__file__).parents[1] / "userscript" / "IPBatchInspector.user.js")
 class UserscriptBoundaryTest(unittest.TestCase):
     def test_metadata_is_installable_and_updatable(self):
         self.assertIn("// ==UserScript==", SCRIPT)
-        self.assertIn("// @version      5.0.0", SCRIPT)
+        self.assertIn("// @version      6.0.0-alpha.2", SCRIPT)
         self.assertIn("// @downloadURL  https://raw.githubusercontent.com/", SCRIPT)
         self.assertIn("// @grant        GM_xmlhttpRequest", SCRIPT)
 
@@ -18,11 +18,14 @@ class UserscriptBoundaryTest(unittest.TestCase):
         self.assertIn("resolveHost(host)", SCRIPT)
         self.assertNotIn("item.port)", SCRIPT)
 
-    def test_real_mode_requires_loopback_controller_and_tun(self):
-        self.assertIn("validateController", SCRIPT)
-        self.assertIn("127.0.0.1", SCRIPT)
-        self.assertIn("TUN/系统 VPN 未启用", SCRIPT)
-        self.assertIn("originalRestored", SCRIPT)
+    def test_vpn_and_controller_modes_are_absent(self):
+        for forbidden in ("validateController", "realSubscriptionTest", "controllerJson", "TUN/系统 VPN", "originalRestored"):
+            self.assertNotIn(forbidden, SCRIPT)
+
+    def test_subscription_distinguishes_literal_ips_from_dns_observations(self):
+        self.assertIn("directlyExposedPublicIp", SCRIPT)
+        self.assertIn("dnsObservationAddresses", SCRIPT)
+        self.assertIn("observableTrafficExits: 0", SCRIPT)
 
     def test_private_redirect_and_size_guards_are_present(self):
         self.assertIn("redirect: 'manual'", SCRIPT)

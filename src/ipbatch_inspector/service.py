@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
-from .ai import infer_ai_policy
+from .ai import build_ai_assessment
 from .downloader import download_text
 from .models import SubscriptionReport
 from .providers import DEFAULT_SOURCES, scan_many
@@ -74,7 +74,7 @@ def inspect_subscription(
     )
     intelligence_ms = round((time.monotonic() - intelligence_started) * 1000)
     for item in results:
-        item.ai_policy = infer_ai_policy(
+        item.ai_assessment = build_ai_assessment(
             item.country_code,
             proxy=item.proxy,
             vpn=item.vpn,
@@ -103,5 +103,5 @@ def inspect_subscription(
             "intelligence": intelligence_ms,
             "total": round((time.monotonic() - started) * 1000),
         },
-        "network_boundary": "subscription documents + OS DNS + public-IP intelligence only; no node port was connected",
+        "network_boundary": "subscription/provider documents are parsed; only directly exposed public IP literals are investigated. Domain DNS answers are listed as infrastructure observations, while hidden relay/landing/chain exits remain unobservable. No node port is connected",
     }

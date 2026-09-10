@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         IPBatchInspector 5
-// @name:zh-CN   IPBatchInspector 5 - IP/订阅/真实路由检测
+// @name         IPBatchInspector 6
+// @name:zh-CN   IPBatchInspector 6 - 只调查 IP/订阅
 // @namespace    https://github.com/zizegak916-glitch/0612
-// @version      5.0.0
-// @description  批量 IP 情报、单 IP 详细调查、只解析订阅，以及通过本机 Mihomo/Clash 系统 VPN 真实测试 AI 对话网址。
+// @version      6.0.0-alpha.2
+// @description  批量 IP 情报、单 IP 详细调查、当前出口与只读订阅解析；不建立 VPN、不切换代理、不连接节点。
 // @author       IPBatchInspector contributors
 // @license      MIT
 // @match        http://*/*
@@ -22,7 +22,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '5.0.0';
+  const VERSION = '6.0.0-alpha.2';
   const MAX_BODY = 5 * 1024 * 1024;
   const MAX_NODES = 500;
   const MAX_PROVIDERS = 8;
@@ -631,20 +631,24 @@
         deduped.push(item);
       }
     }
-    const uniqueHosts = [...new Set(deduped.map((item) => item.host))];
+    const uniqueHosts = [...new Set(deduped.map((item) => item.host).filter((host) => !canonicalIp(host)))];
     setStatus(`正在解析节点域名 0/${uniqueHosts.length}`);
     const hostAnswers = await mapLimit(uniqueHosts, 8, async (host) => ({ host, addresses: await resolveHost(host) }),
       (done, total) => setStatus(`正在解析节点域名 ${done}/${total}（从未连接节点端口）`));
     const addressMap = new Map(hostAnswers.map((item) => [item.host, item.addresses]));
     const resolved = deduped.map((item) => {
-      const addresses = addressMap.get(item.host) || [];
+      const literal = canonicalIp(item.host);
+      const addresses = literal ? [literal] : (addressMap.get(item.host) || []);
       return {
         ...item,
-        addresses: addresses.filter((ip) => !isPrivateHost(ip)),
+        directlyExposedPublicIp: literal && !isPrivateHost(literal) ? literal : null,
+        dnsObservationAddresses: literal ? [] : addresses.filter((ip) => !isPrivateHost(ip)),
         rejectedAddresses: addresses.filter(isPrivateHost)
       };
     });
-    const ips = [...new Set(resolved.flatMap((item) => item.addresses))];
+    const ips = [...new Set(resolved.map((item) => item.directlyExposedPublicIp).filter(Boolean))];
+    const dnsObservations = Object.fromEntries(resolved.filter((item) => item.dnsObservationAddresses.length)
+      .map((item) => [item.host, item.dnsObservationAddresses]));
     let intelligence = [];
     if (enrich && ips.length) {
       const targets = ips.slice(0, 30);
@@ -655,12 +659,16 @@
       checkedAt: now(),
       subscription: { scheme: new URL(main.url).protocol, host: new URL(main.url).hostname, elapsedMs: main.elapsedMs },
       formats: [...new Set(deduped.map((item) => item.protocol))].sort(),
-      counts: { nodes: deduped.length, resolvedPublicIps: ips.length, providers: providerReports.length, enrichedIps: intelligence.length },
+      counts: { nodes: deduped.length, directlyExposedPublicIps: ips.length, domainOnlyNodes: resolved.filter((item) => !item.directlyExposedPublicIp).length,
+        dnsObservationAddresses: [...new Set(Object.values(dnsObservations).flat())].length, observableTrafficExits: 0,
+        providers: providerReports.length, investigatedIps: intelligence.length },
       providers: providerReports,
       nodes: resolved,
+      directExposedPublicIps: ips,
+      dnsObservations,
       intelligence,
       formatFallback: main.formatFallback || null,
-      networkBoundary: '只下载订阅文档、DoH 解析节点主机名并查询公网 IP 情报；节点端口只作为元数据，从未连接',
+      networkBoundary: '只调查订阅 server 字段直接写出的公网 IP。域名 DoH 结果仅是入口基础设施观察，不是节点或出口 IP；中转、落地、链式、CDN及其他未暴露真实出口不可观测。节点端口从未连接。',
       userscriptLimitation: '现代 Tampermonkey 使用手动重定向逐跳审计；若扩展不支持该选项，跨站最终响应会被丢弃，但原生客户端仍具有更强的预连接地址固定保证'
     };
   }
@@ -719,136 +727,6 @@
     };
   }
 
-  function validateController(raw) {
-    let url;
-    try { url = new URL(String(raw || '').trim() || 'http://127.0.0.1:9090'); }
-    catch (_) { throw new Error('控制器地址无效'); }
-    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1'].includes(host) || !url.port || url.username || url.password || (url.pathname !== '/' && url.pathname !== '') || url.search || url.hash) {
-      throw new Error('控制器只允许 http://127.0.0.1:端口、localhost 或 [::1]');
-    }
-    return url.origin;
-  }
-
-  async function controllerJson(base, path, secret, method = 'GET', body = null) {
-    const response = await request({
-      url: `${base}${path}`, method, anonymous: true, redirect: 'manual',
-      headers: { Accept: 'application/json', ...(secret ? { Authorization: `Bearer ${secret}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
-      data: body ? JSON.stringify(body) : undefined
-    });
-    if (response.status < 200 || response.status >= 300) throw new Error(`本机控制器 HTTP ${response.status}: ${response.text.slice(0, 300)}`);
-    return response.text.trim() ? JSON.parse(response.text) : {};
-  }
-
-  async function exitSnapshot() {
-    const urls = ['https://api.ipify.org?format=json', 'https://api64.ipify.org?format=json', 'https://get.geojs.io/v1/ip.json'];
-    const observations = await Promise.all(urls.map(async (url) => {
-      try { const response = await request({ url, anonymous: true }); const ip = JSON.parse(response.text).ip; return { url, ok: !isPrivateHost(ip), ip, status: response.status, elapsedMs: response.elapsedMs }; }
-      catch (error) { return { url, ok: false, error: error.message }; }
-    }));
-    return { ips: [...new Set(observations.filter((item) => item.ok).map((item) => item.ip))], observations };
-  }
-
-  async function realTargets(custom) {
-    const raw = [
-      ['ChatGPT', 'https://chatgpt.com/'], ['Claude', 'https://claude.ai/new'], ['Gemini', 'https://gemini.google.com/app'],
-      ['AI Studio', 'https://aistudio.google.com/app/prompts/new_chat'], ['Grok', 'https://grok.com/'],
-      ['Perplexity', 'https://www.perplexity.ai/'], ['Copilot', 'https://copilot.microsoft.com/'],
-      ['DeepSeek', 'https://chat.deepseek.com/'], ['Qwen', 'https://chat.qwen.ai/']
-    ];
-    for (let value of String(custom || '').split(/[,\n]/).map((item) => item.trim()).filter(Boolean)) {
-      if (!value.includes('://')) value = `https://${value}`;
-      raw.push(['自定义', value]);
-    }
-    if (raw.length > 24) throw new Error('真实测试网址最多 24 个');
-    const results = [];
-    for (const [name, value] of raw) {
-      const url = new URL(value);
-      if (url.protocol !== 'https:' || url.username || url.password) throw new Error(`目标必须是无账号信息的 HTTPS 公网网址：${value}`);
-      const addresses = await resolveHost(url.hostname);
-      if (!addresses.length || addresses.some(isPrivateHost)) throw new Error(`拒绝解析到私网/保留地址的目标：${url.hostname}`);
-      if (!results.some((item) => item.url === url.href)) results.push({ name, url: url.href, addressesBeforeSwitch: addresses });
-    }
-    return results;
-  }
-
-  function classifyReal(status, location, body) {
-    const combined = `${location}\n${body}`.toLowerCase();
-    if (['unsupported country', 'unsupported region', 'not available in your country', 'not available in your region', '地区不可用', '地区暂不支持'].some((value) => combined.includes(value))) return 'geo_blocked';
-    if (status === 429) return 'rate_limited';
-    if (status >= 500) return 'upstream_error';
-    if ([401, 407].includes(status)) return 'authentication_required';
-    if ([403, 503].includes(status) && /(cloudflare|captcha|challenge|cf-chl)/i.test(combined)) return 'challenge';
-    if (status >= 300 && status < 400) return /(login|signin|auth|account)/i.test(location) ? 'authentication_required' : 'redirect';
-    if (status >= 200 && status < 400) return /(sign in|log in|登录)/i.test(combined) ? 'reachable_auth_ui' : 'reachable';
-    return 'blocked_or_rejected';
-  }
-
-  async function realProbe(target) {
-    const queriedAt = now();
-    try {
-      const response = await request({ url: target.url, anonymous: true, redirect: 'manual', headers: { Accept: 'text/html,application/xhtml+xml,*/*;q=0.6' } });
-      const location = response.headers.match(/^location:\s*(.+)$/im)?.[1]?.trim() || '';
-      return { ...target, queriedAt, httpStatus: response.status, elapsedMs: response.elapsedMs,
-        verdict: classifyReal(response.status, location, response.text.slice(0, 32768)), location, cookiesOrCredentialsSent: false };
-    } catch (error) { return { ...target, queriedAt, verdict: /timeout/i.test(error.message) ? 'timeout' : 'network_error', error: error.message, cookiesOrCredentialsSent: false }; }
-  }
-
-  async function realSubscriptionTest(subscriptionUrl, controllerValue, secret, exactNode, customTargets, openBrowser) {
-    const base = validateController(controllerValue);
-    const version = await controllerJson(base, '/version', secret);
-    const config = await controllerJson(base, '/configs', secret);
-    const tunEnabled = typeof config.tun === 'object' ? Boolean(config.tun.enable) : Boolean(config.tun);
-    if (!tunEnabled) throw new Error('本机控制器可访问，但 /configs 显示 TUN/系统 VPN 未启用');
-    const subscription = await inspectSubscription(subscriptionUrl, false, false, true);
-    const names = new Set(subscription.nodes.map((item) => item.name).filter(Boolean));
-    if (!names.size) throw new Error('订阅没有可用于控制器匹配的节点名称');
-    const root = await controllerJson(base, '/proxies', secret);
-    const groups = Object.entries(root.proxies || {}).map(([name, item]) => ({ name, item,
-      overlap: Array.isArray(item.all) ? item.all.filter((nodeName) => names.has(nodeName)) : [] }))
-      .filter((item) => item.overlap.length).sort((a, b) => b.overlap.length - a.overlap.length);
-    if (!groups.length) throw new Error('控制器策略组中找不到订阅的节点名称');
-    const group = groups[0];
-    const requested = String(exactNode || '').trim();
-    if (requested && !group.overlap.includes(requested)) throw new Error('指定节点不同时存在于订阅和控制器策略组');
-    const selected = requested ? [requested] : group.overlap.slice(0, 20);
-    if (openBrowser && selected.length !== 1) throw new Error('打开对话页面必须填写一个精确节点名称');
-    const targets = await realTargets(customTargets);
-    const original = String(group.item.now || '');
-    const baselineExit = await exitSnapshot();
-    const results = [];
-    let restored = false;
-    let restoreError = null;
-    try {
-      for (const nodeName of selected) {
-        await controllerJson(base, `/proxies/${encodeURIComponent(group.name)}`, secret, 'PUT', { name: nodeName });
-        await new Promise((resolve) => setTimeout(resolve, 1400));
-        const current = await controllerJson(base, '/proxies', secret);
-        const actual = current.proxies?.[group.name]?.now || '';
-        if (actual !== nodeName) { results.push({ node: nodeName, switchOk: false, actual }); continue; }
-        const exit = await exitSnapshot();
-        const checks = await mapLimit(targets, 6, realProbe, (done, total) => setStatus(`${nodeName} · 对话网址 ${done}/${total}`));
-        results.push({ node: nodeName, switchOk: true, controllerConfirmed: actual, exit, targets: checks });
-      }
-    } finally {
-      if (original && !openBrowser) {
-        try { await controllerJson(base, `/proxies/${encodeURIComponent(group.name)}`, secret, 'PUT', { name: original }); restored = true; }
-        catch (error) { restoreError = error.message; }
-      }
-    }
-    if (openBrowser) targets.forEach((target) => window.open(target.url, '_blank', 'noopener'));
-    return {
-      kind: 'real-subscription-system-vpn-test', checkedAt: now(), controller: { base, version, tunEnabled, group: group.name,
-        originalNode: original, originalRestored: restored, leftTestNodeForBrowser: openBrowser, restoreError, secretPersisted: false },
-      subscription: { nodes: subscription.counts.nodes, matchedControllerNodes: group.overlap.length, testedNodes: selected.length, contentPersisted: false },
-      baselineExit, results,
-      semantics: { actualConversationUrls: true, browserPagesOpened: openBrowser, automatedCookiesOrCredentialsSent: false, messagesSent: false,
-        meaning: '匿名 GM 请求经当前设备网络栈测试；登录跳转表示已到达，不等于地区封锁。打开页面模式使用浏览器自身登录状态。' },
-      warnings: ['切换策略组会暂时影响该系统 VPN 的其他流量。', '分流规则可能让不同域名走不同线路，请结合逐节点出口。',
-        '浏览器扩展受标签页生命周期限制，不等于 Android/iOS/桌面的后台服务。', '浏览器模式会按设计保留测试节点，完成后请在代理客户端恢复。']
-    };
-  }
-
   async function testAiEntrances() {
     const targets = [
       ['ChatGPT Web', 'https://chatgpt.com/'],
@@ -861,17 +739,28 @@
     const results = await mapLimit(targets, 6, async ([name, url]) => {
       const queriedAt = now();
       try {
-        const response = await request({ url, anonymous: true });
+        const response = await request({ url, anonymous: true, redirect: 'manual' });
+        const body = response.text.slice(0, 32768).toLowerCase();
+        const explicitRegion = ['unsupported country', 'not available in your country', 'not available in your region']
+          .some((value) => body.includes(value));
+        const observation = explicitRegion ? 'explicit-region-message-observed'
+          : response.status >= 200 && response.status < 300 ? 'http-response-observed'
+            : response.status >= 300 && response.status < 400 ? 'redirect-observed'
+              : [400, 401, 403].includes(response.status) && /api/i.test(name) ? 'authentication-response-observed'
+                : response.status === 403 ? 'denial-or-challenge-observed'
+                  : response.status === 429 ? 'rate-limit-response-observed' : 'other-http-response-observed';
         return {
           name, url, queriedAt, status: response.status, elapsedMs: response.elapsedMs,
-          reachable: response.status > 0 && response.status < 500,
-          interpretation: [400, 401, 403].includes(response.status) ? '入口有 HTTP 响应；不代表账号、模型或地区可用' : '仅表示公开入口响应状态'
+          observation,
+          interpretation: '只记录本次匿名 HTTP 事实；不代表国家、IP、账号、登录、对话或模型被支持/不支持'
         };
       } catch (error) {
-        return { name, url, queriedAt, reachable: false, error: error.message };
+        return { name, url, queriedAt, observation: 'transport-failure', error: error.message };
       }
     }, (done, total) => setStatus(`AI 公开入口直测 ${done}/${total}`));
-    return { kind: 'ai-entrance', checkedAt: now(), route: '当前浏览器/扩展所用系统路由', credentialsSent: false, results };
+    return { kind: 'ai-entrance-observations', checkedAt: now(), route: '当前浏览器/扩展所用系统路由', credentialsSent: false,
+      integrationRule: 'HTTP 响应、IP 地理、服务政策和人工登录对话是四类独立证据，冲突时全部保留，任何一类都不能覆盖其他类别。',
+      availabilityVerdict: 'not-produced', results };
   }
 
   function bytesToBase64(bytes) {
@@ -999,17 +888,12 @@
     panel.className = 'panel';
     panel.innerHTML = `
       <div class="head"><h2>IPBatchInspector</h2><span class="badge">v${VERSION} · 油猴版</span><button class="close" data-action="close">关闭</button></div>
-      <div class="notice">普通订阅体检只下载/解析、DoH 与公网 IP 情报，绝不连接节点端口。下方“真实测试”是独立的显式操作：只控制你已开启的本机 Mihomo/Clash 系统 VPN，并访问真实对话网址；油猴受标签页生命周期限制，不是系统后台服务。</div>
-      <div class="row"><button data-action="exit">检测当前出口</button><button data-action="ai">AI 公开入口直测</button></div>
+      <div class="notice">只调查，不建立 VPN、不控制 Mihomo/Clash、不切换代理、不连接订阅节点。订阅只调查 server 字段直接暴露的公网 IP；域名 DNS 结果单列为入口观察，无法看到的中转、落地和链式出口明确标为不可观测。</div>
+      <div class="row"><button data-action="exit">检测当前出口</button><button data-action="ai">记录 AI 入口响应</button></div>
       <textarea data-field="ips" placeholder="粘贴公网 IPv4/IPv6；自动去重，最多 500 个"></textarea>
       <div class="row"><button data-action="scan">批量 IP 情报</button><button class="secondary" data-action="detail">单 IP 详细调查</button></div>
       <div class="grid"><input type="text" data-field="subscription" autocomplete="off" spellcheck="false" placeholder="HTTPS 订阅、sn://subscription…"><button data-action="subscription">只解析订阅</button></div>
-      <div class="row"><label><input type="checkbox" data-field="allow-private">显式允许本机/私网订阅</label><label><input type="checkbox" data-field="enrich" checked>查询前 30 个节点 IP 的五源情报</label><label><input type="checkbox" data-field="fresh">强制刷新（忽略 15 分钟缓存）</label></div>
-      <div class="notice">订阅真实测试（需先开启系统 VPN/TUN 与 External Controller；会临时切换策略组）</div>
-      <input type="text" data-field="controller" value="http://127.0.0.1:9090" autocomplete="off" spellcheck="false" placeholder="本机控制器">
-      <div class="grid"><input type="password" data-field="controller-secret" autocomplete="off" placeholder="控制器 Secret（不保存）"><input type="text" data-field="exact-node" autocomplete="off" placeholder="精确节点名；留空测前20个"></div>
-      <textarea data-field="real-targets" placeholder="自定义 HTTPS 域名/网址，逗号或换行；内置 ChatGPT、Claude、Gemini、AI Studio、Grok、Perplexity、Copilot、DeepSeek、Qwen"></textarea>
-      <div class="row"><label><input type="checkbox" data-field="open-browser">只测精确节点并打开真实对话页面；不恢复节点</label><button data-action="realtest">确认并真实测试</button></div>
+      <div class="row"><label><input type="checkbox" data-field="allow-private">显式允许本机/私网订阅</label><label><input type="checkbox" data-field="enrich" checked>调查前 30 个原文直露公网 IP</label><label><input type="checkbox" data-field="fresh">强制刷新（忽略 15 分钟缓存）</label></div>
       <div class="row"><button class="secondary" data-action="save">口令加密保存</button><button class="secondary" data-action="load">载入已保存</button><button class="secondary" data-action="export">导出 JSON</button></div>
       <div class="status" data-role="status">就绪 · 当前网页不会自动发起检测</div><pre class="out" data-role="output">权限说明：@connect * 仅用于访问用户输入的订阅域名；固定情报源和 DoH 也走 GM 请求。安装前可直接审查本文件全部源码。</pre>
     `;
@@ -1034,16 +918,6 @@
         const url = panel.querySelector('[data-field="subscription"]').value.trim();
         if (!url) throw new Error('请输入订阅地址');
         return inspectSubscription(url, panel.querySelector('[data-field="allow-private"]').checked, panel.querySelector('[data-field="enrich"]').checked, panel.querySelector('[data-field="fresh"]').checked);
-      });
-      if (action === 'realtest') run('正在核验系统 VPN 控制器并测试真实对话网址…', () => {
-        const url = panel.querySelector('[data-field="subscription"]').value.trim();
-        if (!url) throw new Error('请先填写或载入订阅链接');
-        const browser = panel.querySelector('[data-field="open-browser"]').checked;
-        const exact = panel.querySelector('[data-field="exact-node"]').value.trim();
-        if (browser && !exact) throw new Error('打开对话页面时必须填写一个精确节点名');
-        return realSubscriptionTest(url, panel.querySelector('[data-field="controller"]').value,
-          panel.querySelector('[data-field="controller-secret"]').value, exact,
-          panel.querySelector('[data-field="real-targets"]').value, browser);
       });
       if (action === 'save') run('正在加密保存…', async () => { await saveCurrentSubscription(); return { ok: true, savedAt: now(), plaintextStored: false }; });
       if (action === 'load') run('正在载入加密订阅…', async () => { await loadSavedSubscription(); return { ok: true, loadedAt: now() }; });
