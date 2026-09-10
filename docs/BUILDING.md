@@ -25,7 +25,7 @@ Linux, after PyInstaller creates `dist/IPBatchInspector` and `dist/ipbatch-cli`:
 ./packaging/linux/build_packages.sh 6.0.0~alpha.2
 ```
 
-The DEB installs a systemd user-service template but does not silently enable it. Windows service setup likewise requires the user to run `scripts/install_service_windows.ps1`.
+The DEB installs a systemd user-service template but does not silently enable it. Run `ipbatch-enable-monitor` after installation to create a user-owned config and enable it. The Windows Setup installer offers an unchecked option to register the current-user logon task; source installations can run `scripts/install_service_windows.ps1` manually. Neither integration is an administrator/root system service.
 
 ## Android
 

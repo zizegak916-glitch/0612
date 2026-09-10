@@ -20,6 +20,8 @@ install -m 0755 "$project_dir/dist/IPBatchInspector" "$package_root/usr/bin/ipba
 install -m 0755 "$project_dir/dist/ipbatch-cli" "$package_root/usr/bin/ipbatch-cli"
 install -m 0644 "$project_dir/packaging/linux/ipbatch-inspector.desktop" "$package_root/usr/share/applications/"
 install -m 0644 "$project_dir/packaging/linux/ipbatch-monitor.service" "$package_root/usr/lib/systemd/user/"
+install -m 0755 "$project_dir/packaging/linux/ipbatch-enable-monitor" "$package_root/usr/bin/"
+install -m 0644 "$project_dir/monitor.example.json" "$package_root/usr/share/doc/ipbatch-inspector/monitor.example.json"
 install -m 0644 "$project_dir/README.md" "$package_root/usr/share/doc/ipbatch-inspector/README.md"
 install -m 0644 "$project_dir/LICENSE" "$package_root/usr/share/doc/ipbatch-inspector/copyright"
 
@@ -28,6 +30,7 @@ dpkg-deb --root-owner-group --build "$package_root" \
 
 install -m 0755 "$project_dir/dist/IPBatchInspector" "$portable_root/ipbatch-gui"
 install -m 0755 "$project_dir/dist/ipbatch-cli" "$portable_root/ipbatch-cli"
+install -m 0644 "$project_dir/monitor.example.json" "$portable_root/monitor.example.json"
 install -m 0644 "$project_dir/README.md" "$portable_root/README.md"
 install -m 0644 "$project_dir/LICENSE" "$portable_root/LICENSE"
 tar -C "$(dirname "$portable_root")" -czf \

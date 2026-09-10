@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ipbatch-inspector"
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ipbatch-inspector"
+unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+config_path="$config_dir/monitor.json"
+
+mkdir -p "$config_dir" "$state_dir" "$unit_dir"
+if [[ ! -f "$config_path" ]]; then
+  sed "s#\"monitor-results\"#\"$state_dir\"#" \
+    /usr/share/doc/ipbatch-inspector/monitor.example.json > "$config_path"
+  chmod 600 "$config_path"
+fi
+install -m 0644 /usr/lib/systemd/user/ipbatch-monitor.service \
+  "$unit_dir/ipbatch-monitor.service"
+systemctl --user daemon-reload
+systemctl --user enable --now ipbatch-monitor.service
+echo "IPBatchInspector monitor enabled. Config: $config_path"

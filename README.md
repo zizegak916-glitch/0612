@@ -72,8 +72,8 @@ AI 入口状态使用中性事实名称，例如：`已收到入口响应`、`�
 | --- | --- | --- |
 | Android 7+ | `apps/android` | Java 原生应用；扫描、AI 入口观察和详细调查使用 `dataSync` 前台服务，必须显示通知。无 VPN/代理权限 |
 | iOS 16+ | `apps/ios` | SwiftUI；只能请求系统允许的有限后台时间，不能无限常驻 |
-| Windows 10/11 | `ipbatch-gui` / `ipbatch` | Tk 桌面与 CLI；可由用户注册登录计划任务运行 monitor |
-| Linux | `ipbatch-gui` / `ipbatch` | Tk 桌面与 CLI；可由用户安装 systemd 用户服务运行 monitor |
+| Windows 10/11 | `ipbatch-gui` / `ipbatch` | Tk 桌面与 CLI；Setup 可选注册当前用户登录计划任务运行 monitor |
+| Linux | `ipbatch-gui` / `ipbatch` | Tk 桌面与 CLI；DEB 安装后运行 `ipbatch-enable-monitor` 可启用 systemd 用户服务 |
 | Bash/PowerShell | `scripts/ipbatch.sh` / `scripts/ipbatch.ps1` | 调用同一 Python 核心 |
 | Tampermonkey | `userscript/IPBatchInspector.user.js` | 依赖标签页与扩展生命周期，不是系统后台服务；浏览器也无法直接读取目标 IP 的实时 TLS 握手证书 |
 
@@ -146,5 +146,7 @@ Windows/Linux 的后台监控配置只接受无敏感信息的 JSON。订阅监�
 - iOS：用 Xcode 16+ 打开 `apps/ios/IPBatchInspector.xcodeproj`
 - 油猴静态检查：`node --check userscript/IPBatchInspector.user.js`
 - 完整安装包说明：[`docs/BUILDING.md`](docs/BUILDING.md)
+
+CI 的桌面产物必须包含 Windows Setup/便携 EXE、Linux DEB/便携 tar.gz；终端产物必须包含 wheel、源码包、脚本包和独立 `.user.js`。仅有裸二进制或“构建成功”日志不视为完成安装包交付。
 
 架构和安全边界见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`SECURITY.md`](SECURITY.md) 与 [`PRIVACY.md`](PRIVACY.md)。项目采用 MIT License；第三方数据服务的条款、配额和授权仍分别适用。

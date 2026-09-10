@@ -87,7 +87,7 @@ jobs:
         run: |
           mkdir -p release script-bundle
           cp dist/*.whl dist/*.tar.gz release/
-          cp -R scripts src pyproject.toml README.md LICENSE script-bundle/
+          cp -R scripts src pyproject.toml README.md LICENSE monitor.example.json packaging/systemd script-bundle/
           (cd script-bundle && zip -qr "../release/IPBatchInspector-$IPBATCH_VERSION-terminal-scripts.zip" .)
           cp userscript/IPBatchInspector.user.js "release/IPBatchInspector-$IPBATCH_VERSION.user.js"
       - uses: actions/upload-artifact@v4

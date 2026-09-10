@@ -39,6 +39,8 @@ jobs:
           - os: windows-latest
             suffix: windows-x86_64
     runs-on: ${{ matrix.os }}
+    env:
+      IPBATCH_VERSION: 6.0.0-alpha.2
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,23 +53,49 @@ jobs:
       - run: python -c "import tkinter; print('Tk OK')"
       - run: python -m PyInstaller --clean --paths src --onefile --name ipbatch-cli scripts/ip_inspector.py
       - run: python -m PyInstaller --clean --paths src --onefile --windowed --name IPBatchInspector apps/desktop/launcher.py
-      - name: Stage Unix assets
+      - name: Build Linux DEB and portable archive
         if: runner.os != 'Windows'
-        run: |
-          mkdir -p package
-          mv dist/ipbatch-cli package/ipbatch-cli-${{ matrix.suffix }}
-          mv dist/IPBatchInspector package/IPBatchInspector-${{ matrix.suffix }}
-      - name: Stage Windows assets
+        run: ./packaging/linux/build_packages.sh "$IPBATCH_VERSION"
+      - name: Build Windows Setup and portable executables
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force package | Out-Null
-          Move-Item dist/ipbatch-cli.exe package/ipbatch-cli-${{ matrix.suffix }}.exe
-          Move-Item dist/IPBatchInspector.exe package/IPBatchInspector-${{ matrix.suffix }}.exe
+          [scriptblock]::Create((Get-Content scripts\install_service_windows.ps1 -Raw)) | Out-Null
+          choco install innosetup -y --no-progress
+          New-Item -ItemType Directory -Force release | Out-Null
+          $compiler = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          & $compiler "/DMyAppVersion=$env:IPBATCH_VERSION" "packaging\windows\IPBatchInspector.iss"
+          Copy-Item dist\IPBatchInspector.exe "release\IPBatchInspector-$env:IPBATCH_VERSION-Windows-x64-portable.exe"
+          Copy-Item dist\ipbatch-cli.exe "release\ipbatch-cli-$env:IPBATCH_VERSION-Windows-x64.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.suffix }}
-          path: package/*
+          path: release/*
+
+  terminal-package:
+    name: Python, terminal scripts and userscript
+    runs-on: ubuntu-latest
+    env:
+      IPBATCH_VERSION: 6.0.0-alpha.2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+      - name: Stage Python, terminal and Tampermonkey packages
+        run: |
+          mkdir -p release script-bundle
+          cp dist/*.whl dist/*.tar.gz release/
+          cp -R scripts src pyproject.toml README.md LICENSE monitor.example.json packaging/systemd script-bundle/
+          (cd script-bundle && zip -qr "../release/IPBatchInspector-$IPBATCH_VERSION-terminal-scripts.zip" .)
+          cp userscript/IPBatchInspector.user.js "release/IPBatchInspector-$IPBATCH_VERSION.user.js"
+          node --check "release/IPBatchInspector-$IPBATCH_VERSION.user.js"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminal-python-userscript
+          path: release/*
 
   android:
     name: Android native build
@@ -133,6 +161,7 @@ jobs:
       - name: Validate userscript syntax and no node-connection primitives
         run: |
           node --check userscript/IPBatchInspector.user.js
+          bash -n scripts/ipbatch.sh scripts/install_service_linux.sh packaging/linux/ipbatch-enable-monitor
           if grep -nE 'WebSocket|RTCPeerConnection|ProxyService' userscript/IPBatchInspector.user.js; then
             echo 'Forbidden node-connection primitive found in userscript.' >&2
             exit 1
