@@ -189,7 +189,16 @@ public final class ScanForegroundService extends Service {
                 SubscriptionResolver.Report resolved = SubscriptionResolver.resolve(parsed.nodes);
                 if (cancelled.get()) throw new Exception("用户已取消订阅后台处理");
                 StringBuilder detail = new StringBuilder(download.summary()).append("\n").append(parsed.summary())
-                        .append("\n").append(resolved.summary());
+                        .append("\n").append(resolved.summary())
+                        .append("\n调查边界：只把订阅 server 字段直接写出的公网 IP 送入情报查询；域名 DNS 地址仅列为入口基础设施观察，中转、落地、链式和其他未暴露出口均不可观测。");
+                if (!resolved.dnsObservations.isEmpty()) {
+                    List<String> dnsLines = new ArrayList<>();
+                    for (Map.Entry<String, List<String>> entry : resolved.dnsObservations.entrySet()) {
+                        if (dnsLines.size() >= 20) break;
+                        dnsLines.add(entry.getKey() + " → " + IpResult.join(entry.getValue(), ", "));
+                    }
+                    detail.append("\n域名 DNS 观察（不参与 IP 调查）：").append(IpResult.join(dnsLines, "；"));
+                }
                 if (!download.subscriptionUserInfo.isEmpty()) detail.append("\nSubscription-Userinfo：").append(download.subscriptionUserInfo);
                 if (!parsed.warnings.isEmpty()) detail.append("\n提示：").append(IpResult.join(parsed.warnings, "；"));
                 if (!resolved.unresolved.isEmpty()) detail.append("\n部分解析失败：")
@@ -198,10 +207,10 @@ public final class ScanForegroundService extends Service {
                 broadcastSubscription(detail.toString(), "", true);
                 if (resolved.ips.isEmpty()) {
                     synchronized (stateLock) { preparing = false; }
-                    completeNotification("订阅解析完成，但没有公网 IP"); stopSelf(); return;
+                    completeNotification("订阅解析完成，但原文没有直接暴露公网 IP"); stopSelf(); return;
                 }
                 ArrayList<String> ips = new ArrayList<>(resolved.ips);
-                beginScanData(ips, resolved.origins, "订阅 · " + parsed.nodes.size() + " 节点 · " + resolved.ips.size() + " 个唯一公网 IP");
+                beginScanData(ips, resolved.origins, "订阅 · " + parsed.nodes.size() + " 节点 · " + resolved.ips.size() + " 个原文直露公网 IP");
             } catch (Exception e) {
                 synchronized (stateLock) { preparing = false; }
                 broadcastSubscription("", safe(e), false); completeNotification("订阅处理失败"); stopSelf();

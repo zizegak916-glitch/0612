@@ -17,7 +17,6 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
-import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
@@ -49,7 +48,6 @@ import org.json.JSONObject;
 
 public final class MainActivity extends Activity {
     private static final int EXPORT_REQUEST = 41;
-    private static final int VPN_REQUEST = 42;
     private static final int BLUE = Color.rgb(55, 107, 255);
     private static final int INK = Color.rgb(23, 32, 51);
     private static final int MUTED = Color.rgb(102, 113, 133);
@@ -71,7 +69,6 @@ public final class MainActivity extends Activity {
     private Button aiTestButton;
     private TextView aiTestStatus;
     private Button detailButton;
-    private Button realTestButton;
     private TextView advancedStatus;
     private ProgressBar progress;
     private TextView summary;
@@ -92,8 +89,6 @@ public final class MainActivity extends Activity {
     private boolean scanRunning;
     private boolean scanReceiverRegistered;
     private String resultStatusFilter = "全部";
-    private String pendingRealUrl = "", pendingRealNode = "", pendingRealTargets = "";
-    private boolean pendingRealAllowPrivate, pendingRealBrowser;
 
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -186,23 +181,23 @@ public final class MainActivity extends Activity {
         content.addView(networkCard, spaced());
 
         LinearLayout aiCard = card();
-        aiCard.addView(label("AI 平台可用性", 17, INK, Typeface.BOLD));
-        TextView aiHint = label("通过当前设备的 Android 系统默认路由，直接访问 ChatGPT/OpenAI、Claude、Gemini/AI Studio、Grok/xAI、Copilot、Perplexity 的公开入口。网页与 API 分开检测；不发送账号、Cookie、API Key或提示词。", 12, MUTED, Typeface.NORMAL);
+        aiCard.addView(label("当前设备 AI 入口观测", 17, INK, Typeface.BOLD));
+        TextView aiHint = label("通过本应用当前 Android 默认路由访问 AI 公共入口，记录 HTTP 状态、跳转、错误、耗时和时间。它不连接订阅节点，不发送账号、Cookie、API Key 或提示词，也不把匿名响应写成“支持/不支持”。", 12, MUTED, Typeface.NORMAL);
         aiHint.setPadding(0, dp(5), 0, dp(9)); aiCard.addView(aiHint);
-        aiTestButton = primaryButton("后台直测 AI 平台"); aiCard.addView(aiTestButton, buttonParams());
-        aiTestStatus = label("尚未直测。HTTP 可达只证明平台入口响应，不保证登录、账号、支付或具体模型可用。", 11, MUTED, Typeface.NORMAL);
+        aiTestButton = primaryButton("后台记录入口响应"); aiCard.addView(aiTestButton, buttonParams());
+        aiTestStatus = label("尚未观测。只有人工登录并实际完成对话才能证明当时的对话功能；本区只保存匿名网络证据。", 11, MUTED, Typeface.NORMAL);
         aiTestStatus.setTextIsSelectable(true); aiTestStatus.setPadding(0, dp(8), 0, 0); aiCard.addView(aiTestStatus);
         content.addView(aiCard, spaced());
 
         LinearLayout advancedCard = card();
         advancedCard.addView(label("高级网络调查", 17, INK, Typeface.BOLD));
-        TextView advancedHint = label("详细调查一次只接收 1 个公网 IP，汇集注册、路由、风险、PTR 与 443/TLS 证书；真实测试由本应用内嵌 sing-box 建立 Android 系统 VPN，逐节点访问 AI 对话网址，不再依赖外部 Clash 控制器。", 12, MUTED, Typeface.NORMAL);
+        TextView advancedHint = label("一次只接收 1 个公网 IP，汇集注册、路由、风险、PTR、被动端口/CVE 资料与 443/TLS 证书。只调查，不建立 VPN、不切换代理、不连接订阅节点。", 12, MUTED, Typeface.NORMAL);
         advancedHint.setPadding(0, dp(5), 0, dp(9)); advancedCard.addView(advancedHint);
         LinearLayout advancedActions = row();
-        detailButton = primaryButton("单 IP 详细调查"); realTestButton = secondaryButton("订阅真实测试");
-        advancedActions.addView(detailButton, buttonParams()); advancedActions.addView(realTestButton, buttonParams());
+        detailButton = primaryButton("单 IP 详细调查");
+        advancedActions.addView(detailButton, buttonParams());
         advancedCard.addView(advancedActions);
-        advancedStatus = label("尚未运行。真实测试需要 Android 系统 VPN 授权；批量完成后自动拆除 TUN，浏览器验证模式由通知栏手动停止。普通订阅体检永不连接节点。", 11, MUTED, Typeface.NORMAL);
+        advancedStatus = label("尚未运行。任务使用 Android 前台服务，可在切换应用或锁屏后继续；它不是 VPN 服务。", 11, MUTED, Typeface.NORMAL);
         advancedStatus.setTextIsSelectable(true); advancedStatus.setPadding(0, dp(8), 0, 0); advancedCard.addView(advancedStatus);
         content.addView(advancedCard, spaced());
 
@@ -349,7 +344,6 @@ public final class MainActivity extends Activity {
         subscriptionButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { inspectSubscription(); }});
         aiTestButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { startAiTest(); }});
         detailButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showDetailDialog(); }});
-        realTestButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showRealTestDialog(); }});
         viewNodesButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showSubscriptionNodes(); }});
         viewRawButton.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showSubscriptionRaw(); }});
         manageSaved.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { showSavedSubscriptions(); }});
@@ -374,7 +368,6 @@ public final class MainActivity extends Activity {
         Intent service = new Intent(this, ScanForegroundService.class).setAction(ScanForegroundService.ACTION_START_EXIT);
         try {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service);
-            startAiTest();
         } catch (Exception e) { scanRunning = false; finishUi(); summary.setText("出口后台服务启动失败：" + safe(e)); }
     }
 
@@ -597,7 +590,9 @@ public final class MainActivity extends Activity {
                         .append("\n  ").append(check.host);
             }
         }
-        text.append("\n\n判定边界：这是本应用当前系统路由的入口响应测试。HTTP 403 可能来自地区限制、平台风控或机器人挑战；未登录测试不能保证账号和具体模型可用。");
+        text.append("\n\n证据边界：以上是本应用当前系统路由在对应时间收到的匿名 HTTP 事实。")
+                .append("它不适用于订阅中的其他 IP；HTTP 403 的原因可能是地区、IP 风控、WAF 或机器人挑战。")
+                .append("只有人工登录并实际完成对话，才能证明当时账号与模型可用。");
         aiTestStatus.setText(text.toString());
     }
 
@@ -610,62 +605,29 @@ public final class MainActivity extends Activity {
                     String value = ip.getText().toString().trim();
                     String normalized = IpParser.normalize(value);
                     if (normalized == null || !IpParser.isPublic(normalized)) { toast("请输入且只输入一个公网 IP"); return; }
-                    requestNotificationPermission(); detailButton.setEnabled(false); realTestButton.setEnabled(false);
+                    requestNotificationPermission(); detailButton.setEnabled(false);
                     advancedStatus.setText("详细调查已交给系统前台服务，可切换应用或锁屏…");
                     Intent service = new Intent(this, AdvancedTestForegroundService.class).setAction(AdvancedTestForegroundService.ACTION_DETAIL);
                     service.putExtra(AdvancedTestForegroundService.EXTRA_IP, normalized); startForeground(service);
                 }).show();
     }
 
-    private void showRealTestDialog() {
-        final LinearLayout form = column(); form.setPadding(dp(20), 0, dp(20), 0);
-        final EditText node = new EditText(this); node.setHint("精确节点名（留空自动测前 20 个）"); node.setSingleLine(true); form.addView(node, matchWrap());
-        final EditText targets = new EditText(this); targets.setHint("自定义 HTTPS 域名/网址，逗号或换行；内置 7 个 AI 对话网址"); targets.setMinLines(2); form.addView(targets, matchWrap());
-        final CheckBox browser = checkbox("只测精确节点，并在其系统 VPN 下打开真实对话页面", false); form.addView(browser);
-        final CheckBox acknowledge = checkbox("我确认真实测试会临时接管设备系统流量，并连接订阅节点", false); form.addView(acknowledge);
-        new AlertDialog.Builder(this).setTitle("订阅真实测试")
-                .setMessage("这是唯一会连接订阅节点的模式。本应用会请求 Android 正式 VPN 授权，内嵌 sing-box 建立全设备 TUN；不读取 Cookie、账号、API Key，也不发送对话。")
-                .setView(form).setNegativeButton("取消", null).setPositiveButton("确认并后台测试", (dialog, which) -> {
-                    String url = subscriptionInput.getText().toString().trim();
-                    if (url.isEmpty()) { toast("请先在订阅区域填写或载入订阅链接"); return; }
-                    if (browser.isChecked() && node.getText().toString().trim().isEmpty()) { toast("浏览器模式必须填写一个精确节点名"); return; }
-                    if (!acknowledge.isChecked()) { toast("请先确认系统 VPN 与节点连接影响"); return; }
-                    pendingRealUrl = url; pendingRealNode = node.getText().toString().trim(); pendingRealTargets = targets.getText().toString();
-                    pendingRealAllowPrivate = allowPrivateSubscription.isChecked(); pendingRealBrowser = browser.isChecked();
-                    Intent permission = VpnService.prepare(this);
-                    if (permission != null) startActivityForResult(permission, VPN_REQUEST); else launchRealVpnTest();
-                }).show();
-    }
-
-    private void launchRealVpnTest() {
-        if (pendingRealUrl.isEmpty()) return;
-        requestNotificationPermission(); detailButton.setEnabled(false); realTestButton.setEnabled(false);
-        advancedStatus.setText("系统 VPN 服务正在下载订阅并验证节点；TUN 会在下载和私网检查之后建立…");
-        try {
-            SystemVpnService.start(this, pendingRealUrl, pendingRealAllowPrivate, pendingRealNode, pendingRealTargets, pendingRealBrowser);
-            pendingRealUrl = "";
-        } catch (Exception failure) {
-            detailButton.setEnabled(true); realTestButton.setEnabled(true);
-            advancedStatus.setText("系统 VPN 服务启动失败：" + safe(failure));
-        }
-    }
-
     private void startForeground(Intent service) {
         try { if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service); }
-        catch (Exception failure) { detailButton.setEnabled(true); realTestButton.setEnabled(true); advancedStatus.setText("高级后台服务启动失败：" + safe(failure)); }
+        catch (Exception failure) { detailButton.setEnabled(true); advancedStatus.setText("高级后台服务启动失败：" + safe(failure)); }
     }
 
     private void restoreAdvancedState() {
         if (advancedStatus == null) return;
         AdvancedReportStore.State state = AdvancedReportStore.load(this);
-        detailButton.setEnabled(!state.running); realTestButton.setEnabled(!state.running);
+        detailButton.setEnabled(!state.running);
         if (state.running) { advancedStatus.setText("高级模式正在系统前台服务中运行…"); return; }
         if (state.error != null && !state.error.isEmpty()) { advancedStatus.setText("高级模式失败：" + state.error); return; }
         if (state.report != null && !state.report.isEmpty()) {
-            advancedStatus.setText(("detail".equals(state.kind) ? "详细调查" : "真实测试") + "已完成。点击此处查看完整报告。");
+            advancedStatus.setText("详细调查已完成。点击此处查看完整报告。");
             advancedStatus.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
                 AdvancedReportStore.State latest = AdvancedReportStore.load(MainActivity.this);
-                if (!latest.report.isEmpty()) showTextDialog("detail".equals(latest.kind) ? "单 IP 详细调查" : "订阅真实测试", latest.report);
+                if (!latest.report.isEmpty()) showTextDialog("单 IP 详细调查", latest.report);
             }});
         }
     }
@@ -776,7 +738,7 @@ public final class MainActivity extends Activity {
         v.location.setText("地理归属：" + r.locationText());
         v.extra.setText("地理补充：" + r.detailText());
         v.network.setText("网络归属：" + r.networkText());
-        v.ai.setText(AiPolicyEvaluator.evaluate(r));
+        v.ai.setText(AiEvidenceEvaluator.evaluate(r));
         v.registration.setText("注册：" + (r.registration.isEmpty() ? "未返回" : r.registration));
         v.routing.setText("BGP/RPKI：" + (r.routing.isEmpty() ? "未返回" : r.routing));
         v.timing.setText("检测：成功源 " + r.successfulSources + " · 总耗时 " + r.durationMs() + " ms"
@@ -917,11 +879,6 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == VPN_REQUEST) {
-            if (resultCode == RESULT_OK) launchRealVpnTest();
-            else { pendingRealUrl = ""; advancedStatus.setText("Android 系统 VPN 授权被拒绝；未连接任何订阅节点。"); }
-            return;
-        }
         if (requestCode != EXPORT_REQUEST || resultCode != RESULT_OK || data == null || pendingCsv == null) return;
         Uri uri = data.getData(); if (uri == null) return;
         try {

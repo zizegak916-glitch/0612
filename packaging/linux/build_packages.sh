@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-version="${1:-5.0.0}"
+version="${1:-6.0.0~alpha.2}"
 release_dir="$project_dir/release"
 package_root="$project_dir/build/linux-package-root"
 portable_root="$project_dir/build/IPBatchInspector-$version-linux-x86_64"

@@ -362,7 +362,7 @@ public final class ApiClient {
             connection.setInstanceFollowRedirects(false);
             connection.setUseCaches(false);
             connection.setRequestProperty("Accept", "application/json");
-            connection.setRequestProperty("User-Agent", "IPBatchInspector/5.0 Android");
+            connection.setRequestProperty("User-Agent", "IPBatchInspector/6.0.0-alpha.2 Android");
             int code = connection.getResponseCode();
             InputStream input = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
             String body = read(input);
@@ -388,7 +388,7 @@ public final class ApiClient {
                 connection.setInstanceFollowRedirects(false);
                 connection.setUseCaches(false);
                 connection.setRequestProperty("Accept", "application/rdap+json, application/json");
-                connection.setRequestProperty("User-Agent", "IPBatchInspector/5.0 Android");
+                connection.setRequestProperty("User-Agent", "IPBatchInspector/6.0.0-alpha.2 Android");
                 int code = connection.getResponseCode();
                 if (code >= 300 && code < 400) {
                     String location = connection.getHeaderField("Location");

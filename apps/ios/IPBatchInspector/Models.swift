@@ -54,7 +54,9 @@ struct SubscriptionResult: Codable {
     let nodeCount: Int
     let protocolCounts: [String: Int]
     let nodes: [NodeEndpoint]
-    let publicIPs: [String]
+    let directExposedPublicIPs: [String]
+    let dnsObservations: [String: [String]]
+    let unobservableExitNodeCount: Int
     let localOrReserved: [String]
     let intelligence: [IPResult]
     let warnings: [String]

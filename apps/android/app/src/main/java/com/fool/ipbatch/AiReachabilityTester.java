@@ -27,7 +27,7 @@ public final class AiReachabilityTester {
         public long durationMs;
         public long checkedAt;
 
-        public boolean reachable() { return status.startsWith("入口可达"); }
+        public boolean receivedResponse() { return status.startsWith("已收到"); }
     }
 
     public static final class Report {
@@ -36,15 +36,16 @@ public final class AiReachabilityTester {
         public long finishedAt;
 
         public String summary() {
-            int reachable = 0, restricted = 0, failed = 0;
+            int responses = 0, review = 0, failed = 0;
             synchronized (checks) {
                 for (Check check : checks) {
-                    if (check.reachable()) reachable++;
-                    else if (check.status.contains("限制") || check.status.contains("拒绝")) restricted++;
+                    if (check.receivedResponse()) responses++;
+                    else if (check.status.contains("观察到")) review++;
                     else failed++;
                 }
             }
-            return "完成 " + checks.size() + " 项 · 入口可达 " + reachable + " · 限制/拒绝 " + restricted + " · 网络失败/异常 " + failed;
+            return "完成 " + checks.size() + " 项 · 收到 HTTP 响应 " + responses
+                    + " · 需人工复核 " + review + " · 传输失败 " + failed;
         }
     }
 
@@ -120,27 +121,34 @@ public final class AiReachabilityTester {
         boolean geo = code == 451 || containsAny(body, "unsupported country", "unsupported_country",
                 "not available in your country", "not available in your region", "country is not supported");
         if (geo) {
-            out.status = "地区限制"; out.detail = "服务明确返回国家/地区不可用信号"; return;
+            out.status = "观察到地区提示";
+            out.detail = "本次匿名 HTTP 响应含地区不可用文字；这是一次观测，不是该国家或该 IP 的永久结论";
+            return;
         }
-        if (code >= 200 && code < 400) {
-            out.status = "入口可达";
-            out.detail = code >= 300 ? "HTTP " + code + " 跳转至 " + hostOnly(location) : "HTTP " + code + " 正常响应";
+        if (code >= 200 && code < 300) {
+            out.status = "已收到入口响应";
+            out.detail = "HTTP " + code + "；只证明匿名入口返回内容，不证明登录或对话可用";
+            return;
+        }
+        if (code >= 300 && code < 400) {
+            out.status = "已收到跳转响应";
+            out.detail = "HTTP " + code + " → " + hostOnly(location) + "；未跟随跳转，不能据此判断地区或登录结果";
             return;
         }
         boolean auth = containsAny(body, "api key", "api_key", "authentication", "unauthorized", "credentials", "permission_denied");
         if (authProbe && (code == 400 || code == 401 || (code == 403 && auth))) {
-            out.status = "入口可达（鉴权响应）";
-            out.detail = "HTTP " + code + "；未发送 API Key，收到预期鉴权响应";
+            out.status = "已收到鉴权响应";
+            out.detail = "HTTP " + code + "；未发送 API Key，只能确认 API 前端作出了响应";
         } else if (code == 401) {
-            out.status = "入口可达（需要登录）"; out.detail = "HTTP 401";
+            out.status = "已收到登录要求"; out.detail = "HTTP 401；不等同于登录后的服务可用";
         } else if (code == 403) {
-            out.status = "被拒绝/需复核"; out.detail = "HTTP 403；可能是地区、风控或机器人挑战，不能单凭此码定性";
+            out.status = "观察到拒绝/挑战"; out.detail = "HTTP 403；可能是地区、IP 风控、WAF 或机器人挑战，原因未证实";
         } else if (code == 429) {
-            out.status = "入口可达（限流）"; out.detail = "HTTP 429";
+            out.status = "已收到限流响应"; out.detail = "HTTP 429；入口响应了，但未验证账号或模型";
         } else if (code >= 500) {
-            out.status = "服务端异常"; out.detail = "HTTP " + code;
+            out.status = "已收到服务端异常"; out.detail = "HTTP " + code + "；不能归因为地区限制";
         } else {
-            out.status = "响应异常"; out.detail = "HTTP " + code;
+            out.status = "观察到其他响应"; out.detail = "HTTP " + code + "；原因未证实";
         }
     }
 

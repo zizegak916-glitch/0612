@@ -7,11 +7,6 @@ struct ContentView: View {
     @State private var allowPrivate = false
     @State private var saveName = ""
     @State private var detailIP = "1.1.1.1"
-    @State private var controllerURL = "http://127.0.0.1:9090"
-    @State private var controllerSecret = ""
-    @State private var exactNode = ""
-    @State private var customTargets = ""
-    @State private var openBrowser = false
 
     var body: some View {
         NavigationStack {
@@ -56,15 +51,15 @@ struct ContentView: View {
                 TextField("Display name", text: $saveName)
                 Button("Save URL securely") { model.save(name: saveName, url: subscriptionURL) }.disabled(saveName.isEmpty || subscriptionURL.isEmpty)
             }
-            Section("Network boundary") { Text("Only subscription/provider downloads, OS DNS and public-IP intelligence are permitted. Node ports are never connected.") }
+            Section("Network boundary") { Text("Only public IP literals directly exposed in server fields are investigated. Domain DNS answers are listed as infrastructure observations, never as node or exit IPs. Hidden relay, landing and chain exits are unobservable; node ports are never connected.") }
         }
     }
 
     private var routeTab: some View {
         Form {
             Button("Detect current exit IP") { model.detectExit() }.disabled(model.isRunning)
-            Button("Test AI public entrances") { model.testAI() }.disabled(model.isRunning)
-            Text("These requests use the current iOS system route and send no account, Cookie, API key or prompt. A response does not prove logged-in model availability.")
+            Button("Record AI entrance responses") { model.testAI() }.disabled(model.isRunning)
+            Text("These requests use only the current iOS route and send no account, Cookie, API key or prompt. HTTP evidence, IP geolocation, provider policy and a manual logged-in conversation are separate facts; no supported/unsupported verdict is inferred.")
         }
     }
 
@@ -87,20 +82,8 @@ struct ContentView: View {
                     .disabled(model.isRunning || detailIP.isEmpty)
                 Text("Queries RDAP, RIPEstat, Shodan InternetDB, GreyNoise and PTR, then actively connects only to TLS 443. Private/reserved IPs are rejected.")
             }
-            Section("Real subscription test via system VPN") {
-                TextField("http://127.0.0.1:9090", text: $controllerURL).textInputAutocapitalization(.never)
-                SecureField("Mihomo/Clash controller secret (not saved)", text: $controllerSecret)
-                TextField("Exact node name; blank tests first 20 matches", text: $exactNode)
-                TextField("Custom HTTPS URLs/domains, comma separated", text: $customTargets).textInputAutocapitalization(.never)
-                Toggle("Open real conversation pages; leave exact node selected", isOn: $openBrowser)
-                Button("Confirm, switch nodes and test") {
-                    model.realSubscriptionTest(url: subscriptionURL, controller: controllerURL, secret: controllerSecret,
-                                               node: exactNode, targets: customTargets, openBrowser: openBrowser)
-                }.disabled(model.isRunning || subscriptionURL.isEmpty || (openBrowser && exactNode.isEmpty))
-                Text("Requires an already-running iOS system VPN/TUN and a loopback External Controller. The subscription is downloaded only for parsing and node-name matching. Normal mode restores the original group selection; browser mode deliberately does not.")
-            }
             Section("iOS background boundary") {
-                Text("User-started work requests iOS background execution time, but iOS may suspend or terminate long jobs. This app does not embed or create a VPN tunnel; it controls a companion Mihomo/Clash instance already authorized by you.")
+                Text("User-started investigation requests iOS background execution time, but iOS may suspend or terminate long jobs. This app contains no VPN tunnel, proxy switcher or subscription-node connection path.")
             }
         }
     }

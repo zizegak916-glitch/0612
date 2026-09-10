@@ -9,8 +9,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-POLICY_SNAPSHOT = "2026-09-02"
-USER_AGENT = "Mozilla/5.0 IPBatchInspector/5.0"
+POLICY_REFERENCE_CHECKED = "2026-09-09"
+OPENAI_API_POLICY_SOURCE = "https://developers.openai.com/api/docs/supported-countries"
+USER_AGENT = "Mozilla/5.0 IPBatchInspector/6.0.0-alpha.2"
 
 ENDPOINTS = (
     ("ChatGPT web", "web", "https://chatgpt.com/"),
@@ -26,14 +27,6 @@ ENDPOINTS = (
     ("Perplexity", "web", "https://www.perplexity.ai/"),
 )
 
-COMMON_SUPPORTED = set(
-    "US CA GB AU NZ JP KR TW SG IN ID MY TH VN PH DE FR NL BE LU CH AT IT ES PT IE DK SE NO FI IS PL CZ SK SI HR RO BG GR CY MT EE LV LT UA TR IL AE SA QA KW BH OM JO LB IQ EG MA TN DZ ZA NG KE GH BR AR CL CO PE MX UY PY BO EC CR PA DO JM".split()
-)
-OPENAI_UNSUPPORTED = set("CN HK MO RU BY IR KP CU SY VE".split())
-CLAUDE_UNSUPPORTED = set("CN HK MO RU BY IR KP CU SY VE".split())
-GEMINI_UNSUPPORTED = set("CN RU IR KP CU SY".split())
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -42,16 +35,23 @@ def _classify(code: int, body: str, kind: str) -> tuple[str, str]:
     lower = body.lower()
     unsupported = any(phrase in lower for phrase in ("not available in your country", "unsupported country", "not available in your region"))
     if unsupported:
-        return "region-blocked", "response explicitly reported an unsupported country/region"
-    if 200 <= code < 400:
-        return "reachable", "public entrance returned a normal response"
+        return "explicit-region-message-observed", "this anonymous response contained an unavailable-region phrase; it is a time-scoped observation, not a permanent country verdict"
+    if 200 <= code < 300:
+        return "http-response-observed", "the anonymous public entrance returned content; login and conversation capability were not tested"
+    if 300 <= code < 400:
+        return "redirect-observed", "the entrance returned a redirect; it was not followed and does not establish region or account availability"
     if kind == "api" and code in {400, 401, 403}:
-        return "reachable-auth-required", "API entrance responded; no credential was sent"
+        return "authentication-response-observed", "the API frontend responded without a credential; model access was not tested"
     if code == 403:
-        return "restricted-or-challenged", "403 may be policy, anti-bot, WAF or IP reputation; it is not labeled as a proven geo-block"
+        return "denial-or-challenge-observed", "403 may be policy, anti-bot, WAF or IP reputation; the cause is unproven"
     if code == 429:
-        return "reachable-rate-limited", "entrance responded with rate limiting"
-    return "failed", f"HTTP {code}"
+        return "rate-limit-response-observed", "the entrance returned rate limiting; account and model access were not tested"
+    return "other-http-response-observed", f"HTTP {code}; it is not attributed to a country without explicit evidence"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+        return None
 
 
 def test_ai_entrances(timeout: float = 10.0) -> list[dict[str, Any]]:
@@ -60,7 +60,7 @@ def test_ai_entrances(timeout: float = 10.0) -> list[dict[str, Any]]:
         name, kind, url = endpoint
         start = time.monotonic()
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/json"})
-        opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
+        opener = urllib.request.build_opener(_NoRedirect())
         try:
             with opener.open(request, timeout=timeout) as response:
                 code = response.status
@@ -72,42 +72,34 @@ def test_ai_entrances(timeout: float = 10.0) -> list[dict[str, Any]]:
             status, detail = _classify(exc.code, body, kind)
             return {"name": name, "kind": kind, "host": exc.url.split("/", 3)[2], "http_code": exc.code, "status": status, "detail": detail, "checked_at": _now(), "elapsed_ms": round((time.monotonic() - start) * 1000)}
         except Exception as exc:
-            return {"name": name, "kind": kind, "host": url.split("/", 3)[2], "http_code": None, "status": "network-error", "detail": str(exc)[:240], "checked_at": _now(), "elapsed_ms": round((time.monotonic() - start) * 1000)}
+            return {"name": name, "kind": kind, "host": url.split("/", 3)[2], "http_code": None, "status": "transport-failure", "detail": str(exc)[:240], "checked_at": _now(), "elapsed_ms": round((time.monotonic() - start) * 1000)}
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         futures = [pool.submit(check, endpoint) for endpoint in ENDPOINTS]
         return [future.result() for future in futures]
 
 
-def infer_ai_policy(country_code: str, *, proxy: bool = False, vpn: bool = False, tor: bool = False, datacenter: bool = False, risk_scores: dict[str, int] | None = None) -> dict[str, str]:
+def build_ai_assessment(country_code: str, *, proxy: bool = False, vpn: bool = False, tor: bool = False, datacenter: bool = False, risk_scores: dict[str, int] | None = None) -> dict[str, str]:
+    """Describe evidence boundaries without turning IP metadata into service availability."""
     code = country_code.strip().upper()
-
-    def policy(unsupported: set[str], workspace_only: bool = False) -> str:
-        if not code:
-            return "country code unavailable; no official-region match"
-        if workspace_only:
-            return "consumer availability not listed; official documentation only notes a Workspace scenario"
-        if code in unsupported:
-            return "not present in the maintained official support snapshot; likely unavailable"
-        if code in COMMON_SUPPORTED or code in {"HK", "MO"}:
-            return "present in the maintained official support snapshot"
-        return "country code is not covered by the local snapshot; check the live official list"
-
     highest = max((risk_scores or {}).values(), default=None)
     if tor or (highest is not None and highest >= 67):
-        risk = "high-risk signal; authentication, rate limits or rejection remain possible even in a supported region"
+        risk = "providers reported a high-risk signal; this may correlate with extra verification but does not prove service unavailability"
     elif proxy or vpn or datacenter or (highest is not None and highest >= 34):
-        risk = "proxy/VPN/datacenter or medium-risk signal may trigger platform controls"
+        risk = "providers reported proxy/VPN/datacenter or medium-risk evidence; this is not a blocking verdict"
     elif not risk_scores:
         risk = "no successful source supplied a risk score; low risk cannot be claimed"
     else:
-        risk = "no strong risk signal observed; this does not guarantee account or model availability"
+        risk = "no strong risk signal was reported; this does not guarantee account or model availability"
     return {
-        "snapshot_date": POLICY_SNAPSHOT,
-        "openai": policy(OPENAI_UNSUPPORTED),
-        "claude": policy(CLAUDE_UNSUPPORTED),
-        "gemini_web": policy(GEMINI_UNSUPPORTED, workspace_only=code == "CN"),
-        "grok_xai_copilot_perplexity": "no equally detailed official region snapshot is maintained; use current-device entrance checks",
-        "ip_risk_inference": risk,
-        "boundary": "policy and IP-intelligence inference only; the subscription node was not connected or unlock-tested",
+        "availability_verdict": "not-tested",
+        "route_observation": "this IP was investigated as data only; it was not selected as a route and no subscription node was connected",
+        "geolocation_evidence": f"provider country code is {code}" if code else "provider country code is unavailable",
+        "geolocation_boundary": "an IP country code is not a ChatGPT-web, API, account, billing, or model-availability result",
+        "openai_api_policy_reference": "official API country policy is a separate scope; no automatic country allow/deny verdict is produced",
+        "openai_api_policy_source": OPENAI_API_POLICY_SOURCE,
+        "policy_reference_checked": POLICY_REFERENCE_CHECKED,
+        "ip_risk_evidence": risk,
+        "integration_rule": "preserve route observations, policy references, geolocation, and reputation as separate evidence; never let one overwrite another",
+        "boundary": "no supported/unsupported conclusion can be made from this IP record; use timestamped current-route observations and a separate manual logged-in conversation test",
     }

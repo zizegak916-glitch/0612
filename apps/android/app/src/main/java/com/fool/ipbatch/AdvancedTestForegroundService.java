@@ -49,6 +49,6 @@ public final class AdvancedTestForegroundService extends Service {
         if (ongoing) { if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, value, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC); else startForeground(NOTIFICATION_ID, value); }
         else { NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE); if (manager != null) manager.notify(NOTIFICATION_ID, value); }
     }
-    private void createChannel() { if (Build.VERSION.SDK_INT < 26) return; NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE); if (manager != null) manager.createNotificationChannel(new NotificationChannel(CHANNEL, "详细调查与真实测试", NotificationManager.IMPORTANCE_LOW)); }
+    private void createChannel() { if (Build.VERSION.SDK_INT < 26) return; NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE); if (manager != null) manager.createNotificationChannel(new NotificationChannel(CHANNEL, "单 IP 详细调查", NotificationManager.IMPORTANCE_LOW)); }
     private String safe(Exception error) { String value = error.getMessage(); if (value == null || value.trim().isEmpty()) value = error.getClass().getSimpleName(); value = value.replace('\n', ' ').replace('\r', ' '); return value.length() <= 900 ? value : value.substring(0, 900); }
 }

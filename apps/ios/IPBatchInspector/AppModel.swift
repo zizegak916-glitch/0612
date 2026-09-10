@@ -23,14 +23,6 @@ final class AppModel: ObservableObject {
         run("Running single-IP detailed investigation…") { try await NetworkService.detailedInvestigation(ip) }
     }
 
-    func realSubscriptionTest(url: String, controller: String, secret: String, node: String,
-                              targets: String, openBrowser: Bool) {
-        run("Testing subscription nodes through the active system VPN…") {
-            try await NetworkService.realSubscriptionTest(subscriptionURL: url, controllerURL: controller,
-                secret: secret, requestedNode: node, customTargets: targets, openBrowser: openBrowser)
-        }
-    }
-
     func inspectSubscription(_ url: String, allowPrivate: Bool) {
         run("Downloading, parsing and resolving…") { JSONRender.string(try await NetworkService.inspectSubscription(url, allowPrivate: allowPrivate)) }
     }

@@ -110,12 +110,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: actions/cache@v4
-        with:
-          path: |
-            apps/android/app/libs/libbox.aar
-            apps/android/app/libs/libbox.aar.sha256
-          key: android-libbox-v1.14.0-0b8995879f29a9b98ee027bc17b75e101445b238-r1
       - name: Restore optional protected Android signing key
         shell: bash
         run: |

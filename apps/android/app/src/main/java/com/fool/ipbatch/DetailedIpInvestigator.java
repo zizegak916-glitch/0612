@@ -106,8 +106,8 @@ public final class DetailedIpInvestigator {
 
         if (failures >= 3) {
             out.append("\n【境内辅助源（非官方镜像；仅在核心源大量失败时调用）】\n");
-            appendAuxiliary(out, "百度智能云 IP 地理辅助", "https://qifu-api.baidubce.com/ip/geo/v1/district?ip=" + encoded, timeout);
-            appendAuxiliary(out, "CIP.cc 页面辅助", "https://www.cip.cc/" + encoded, timeout);
+            appendAuxiliary(out, "百度智能云 IP 地理辅助", "https://qifu-api.baidubce.com/ip/geo/v1/district?ip=" + encoded, ip, timeout);
+            appendAuxiliary(out, "CIP.cc 页面辅助", "https://www.cip.cc/" + encoded, ip, timeout);
         } else {
             out.append("\n【境内辅助源】\n核心被动源失败少于 3 个，本次未调用；这些站点不是 RDAP/RIPE/Shodan 的官方镜像。\n");
         }
@@ -150,8 +150,13 @@ public final class DetailedIpInvestigator {
         }
         long duration = System.currentTimeMillis() - started;
         if (response == null) return Observation.failure(source[0], safe(last), attempts, duration);
-        boolean success = response.code >= 200 && response.code < 300;
-        String summary = success ? summarize(source[2], response.body) : "无记录或请求失败：HTTP " + response.code + "\n" + clip(response.body, 600);
+        boolean noRecord = response.code == 404
+                && ("internetdb".equals(source[2]) || "greynoise".equals(source[2]));
+        boolean success = (response.code >= 200 && response.code < 300) || noRecord;
+        String summary = noRecord
+                ? "上游已响应但当前无收录（HTTP 404）；这不等于安全，也不属于网络请求失败。"
+                : success ? summarize(source[2], response.body)
+                : "请求失败：HTTP " + response.code + "\n" + clip(response.body, 600);
         return new Observation(source[0], source[2], response.body, summary, success, response.code, response.finalHost, attempts, duration, System.currentTimeMillis());
     }
 
@@ -220,9 +225,15 @@ public final class DetailedIpInvestigator {
         if (!standard.errors.isEmpty()) out.append("\n失败源：").append(IpResult.join(standard.errors, "；"));
     }
 
-    private void appendAuxiliary(StringBuilder out, String name, String url, int timeout) {
-        try { HttpResult result = get(url, timeout); out.append(name).append("：HTTP ").append(result.code).append("；")
-                .append(clip(result.body.replaceAll("(?is)<[^>]+>", " ").replaceAll("\\s+", " "), 1500)).append("\n"); }
+    private void appendAuxiliary(StringBuilder out, String name, String url, String expectedIp, int timeout) {
+        try {
+            HttpResult result = get(url, timeout);
+            if (result.code < 200 || result.code >= 300) throw new Exception("HTTP " + result.code);
+            String rendered = result.body.replaceAll("(?is)<[^>]+>", " ").replaceAll("\\s+", " ");
+            if (!rendered.contains(expectedIp)) throw new Exception("响应未回显目标 IP，拒绝采信");
+            out.append(name).append("：HTTP ").append(result.code).append("；")
+                    .append(clip(rendered, 1500)).append("\n");
+        }
         catch (Exception failure) { out.append(name).append("：失败；").append(safe(failure)).append("\n"); }
     }
 
@@ -234,7 +245,7 @@ public final class DetailedIpInvestigator {
                 connection.setConnectTimeout(timeout); connection.setReadTimeout(timeout); connection.setRequestMethod("GET");
                 connection.setInstanceFollowRedirects(false); connection.setUseCaches(false);
                 connection.setRequestProperty("Accept", "application/rdap+json,application/json,text/html;q=0.5,*/*;q=0.2");
-                connection.setRequestProperty("Accept-Encoding", "identity"); connection.setRequestProperty("User-Agent", "IPBatchInspector/6.0 Android detailed mode");
+                connection.setRequestProperty("Accept-Encoding", "identity"); connection.setRequestProperty("User-Agent", "IPBatchInspector/6.0.0-alpha.2 Android detailed mode");
                 int code = connection.getResponseCode();
                 if (code >= 300 && code < 400) {
                     String location = connection.getHeaderField("Location"); if (location == null || location.trim().isEmpty()) throw new Exception("HTTPS 跳转缺少 Location");

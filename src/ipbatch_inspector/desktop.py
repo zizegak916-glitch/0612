@@ -6,27 +6,25 @@ from concurrent.futures import ThreadPoolExecutor
 from tkinter import messagebox, simpledialog, ttk
 from typing import Any, Callable
 
-from .ai import infer_ai_policy, test_ai_entrances
+from .ai import build_ai_assessment, test_ai_entrances
 from .detail import detailed_investigation
 from .iptools import extract_ips
 from .providers import detect_exit_ips, scan_many
 from .saved import list_redacted, load as load_saved, save as save_subscription
 from .service import inspect_subscription
-from .realtest import real_subscription_test
 
 
 class InspectorApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("IPBatchInspector 5")
+        self.title("IPBatchInspector 6")
         self.geometry("1040x720")
         self.minsize(820, 560)
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ipbatch-ui")
-        self.status = tk.StringVar(value="Ready — read-only inspection is default; real VPN testing requires explicit confirmation")
+        self.status = tk.StringVar(value="Ready — investigation only; no VPN, proxy switching, or subscription-node connection")
         self.allow_private = tk.BooleanVar(value=False)
         self.resolve_only = tk.BooleanVar(value=False)
         self.fresh = tk.BooleanVar(value=False)
-        self.real_open_browser = tk.BooleanVar(value=False)
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -39,25 +37,22 @@ class InspectorApp(tk.Tk):
         container = ttk.Frame(self, padding=12)
         container.pack(fill="both", expand=True)
         ttk.Label(container, text="IPBatchInspector", font=("TkDefaultFont", 18, "bold")).pack(anchor="w")
-        ttk.Label(container, text="Evidence-first IP intelligence · single-IP OSINT · isolated real system-VPN tests").pack(anchor="w", pady=(0, 10))
+        ttk.Label(container, text="Evidence-first IP intelligence · single-IP OSINT · read-only subscription investigation").pack(anchor="w", pady=(0, 10))
         notebook = ttk.Notebook(container)
         notebook.pack(fill="both", expand=True)
         self.ip_tab = ttk.Frame(notebook, padding=10)
         self.subscription_tab = ttk.Frame(notebook, padding=10)
         self.device_tab = ttk.Frame(notebook, padding=10)
         self.detail_tab = ttk.Frame(notebook, padding=10)
-        self.realtest_tab = ttk.Frame(notebook, padding=10)
         self.saved_tab = ttk.Frame(notebook, padding=10)
         notebook.add(self.ip_tab, text="Batch IP")
         notebook.add(self.detail_tab, text="Single-IP Detail")
         notebook.add(self.subscription_tab, text="Subscription")
-        notebook.add(self.realtest_tab, text="Real VPN Test")
         notebook.add(self.device_tab, text="Exit & AI")
         notebook.add(self.saved_tab, text="Saved URLs")
         self._ip_ui()
         self._detail_ui()
         self._subscription_ui()
-        self._realtest_ui()
         self._device_ui()
         self._saved_ui()
         ttk.Separator(container).pack(fill="x", pady=(10, 4))
@@ -92,7 +87,7 @@ class InspectorApp(tk.Tk):
         ttk.Checkbutton(controls, text="Force refresh", variable=self.fresh).pack(side="left")
         ttk.Button(controls, text="Inspect without connecting nodes", command=self._run_subscription).pack(side="right")
         ttk.Button(controls, text="Save URL securely", command=self._save_current).pack(side="right", padx=8)
-        ttk.Label(self.subscription_tab, text="Raw content is held only in memory; results redact credentials. Node ports remain metadata.", foreground="#7a3e00").pack(anchor="w", pady=6)
+        ttk.Label(self.subscription_tab, text="Only public IP literals exposed in server fields are investigated. Domain DNS answers are observations, not node/exit IPs; hidden relay/landing exits are unknowable.", foreground="#7a3e00", wraplength=980).pack(anchor="w", pady=6)
         self.subscription_output = self._output(self.subscription_tab)
         self.subscription_output.pack(fill="both", expand=True)
 
@@ -117,54 +112,12 @@ class InspectorApp(tk.Tk):
         self.detail_output = self._output(self.detail_tab)
         self.detail_output.pack(fill="both", expand=True)
 
-    def _realtest_ui(self) -> None:
-        ttk.Label(self.realtest_tab, text="Real subscription test through an already-running Clash/Mihomo/Clash Mate system VPN").pack(anchor="w")
-        form = ttk.Frame(self.realtest_tab)
-        form.pack(fill="x", pady=6)
-        for column in (1, 3):
-            form.columnconfigure(column, weight=1)
-        ttk.Label(form, text="Subscription URL").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
-        self.real_subscription_url = ttk.Entry(form)
-        self.real_subscription_url.grid(row=0, column=1, columnspan=3, sticky="ew", pady=3)
-        ttk.Label(form, text="Local controller").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=3)
-        self.real_controller = ttk.Entry(form)
-        self.real_controller.grid(row=1, column=1, sticky="ew", pady=3)
-        self.real_controller.insert(0, "http://127.0.0.1:9090")
-        ttk.Label(form, text="Secret (not saved)").grid(row=1, column=2, sticky="w", padx=6, pady=3)
-        self.real_secret = ttk.Entry(form, show="•")
-        self.real_secret.grid(row=1, column=3, sticky="ew", pady=3)
-        ttk.Label(form, text="Selector group").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=3)
-        self.real_group = ttk.Entry(form)
-        self.real_group.grid(row=2, column=1, sticky="ew", pady=3)
-        ttk.Label(form, text="Exact node (blank=matching nodes)").grid(row=2, column=2, sticky="w", padx=6, pady=3)
-        self.real_node = ttk.Entry(form)
-        self.real_node.grid(row=2, column=3, sticky="ew", pady=3)
-        ttk.Label(form, text="AI presets").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=3)
-        self.real_targets = ttk.Entry(form)
-        self.real_targets.grid(row=3, column=1, sticky="ew", pady=3)
-        self.real_targets.insert(0, "all")
-        ttk.Label(form, text="Custom HTTPS URL/domain").grid(row=3, column=2, sticky="w", padx=6, pady=3)
-        self.real_custom = ttk.Entry(form)
-        self.real_custom.grid(row=3, column=3, sticky="ew", pady=3)
-        actions = ttk.Frame(self.realtest_tab)
-        actions.pack(fill="x")
-        ttk.Checkbutton(actions, text="Open conversation pages and leave the one tested node selected", variable=self.real_open_browser).pack(side="left")
-        ttk.Button(actions, text="Start explicit real test", command=self._run_realtest).pack(side="right")
-        ttk.Label(
-            self.realtest_tab,
-            text="Requires TUN/VPN enabled. It changes the selected policy group, sends no login cookie or prompt, and restores the original node unless browser opening is requested.",
-            foreground="#9b1c1c",
-            wraplength=980,
-        ).pack(anchor="w", pady=6)
-        self.realtest_output = self._output(self.realtest_tab)
-        self.realtest_output.pack(fill="both", expand=True)
-
     def _device_ui(self) -> None:
         controls = ttk.Frame(self.device_tab)
         controls.pack(fill="x")
         ttk.Button(controls, text="Detect current exit IP", command=lambda: self._background("Detecting exit IP…", detect_exit_ips, self.device_output)).pack(side="left")
-        ttk.Button(controls, text="Test AI public entrances", command=lambda: self._background("Testing AI entrances…", test_ai_entrances, self.device_output)).pack(side="left", padx=8)
-        ttk.Label(self.device_tab, text="Uses this process's current system route. Sends no account, cookie, API key or prompt.").pack(anchor="w", pady=8)
+        ttk.Button(controls, text="Record AI entrance responses", command=lambda: self._background("Recording AI entrance responses…", test_ai_entrances, self.device_output)).pack(side="left", padx=8)
+        ttk.Label(self.device_tab, text="Uses only this process's current route. HTTP evidence, IP geolocation, provider policy, and a manual logged-in conversation are separate facts; no supported/unsupported verdict is inferred.", wraplength=980).pack(anchor="w", pady=8)
         self.device_output = self._output(self.device_tab)
         self.device_output.pack(fill="both", expand=True)
 
@@ -188,7 +141,7 @@ class InspectorApp(tk.Tk):
         def work() -> dict[str, Any]:
             results = scan_many(ips, fresh=fresh)
             for item in results:
-                item.ai_policy = infer_ai_policy(item.country_code, proxy=item.proxy, vpn=item.vpn, tor=item.tor, datacenter=item.datacenter, risk_scores=item.risk_scores)
+                item.ai_assessment = build_ai_assessment(item.country_code, proxy=item.proxy, vpn=item.vpn, tor=item.tor, datacenter=item.datacenter, risk_scores=item.risk_scores)
             return {"warnings": warnings, "results": [item.as_dict() for item in results]}
 
         self._background(f"Scanning {len(ips)} IPs…", work, self.ip_output)
@@ -224,42 +177,6 @@ class InspectorApp(tk.Tk):
             "Running single-IP detailed investigation…",
             lambda: detailed_investigation(value, tls_ports=ports or (443,), fresh=fresh),
             self.detail_output,
-        )
-
-    def _run_realtest(self) -> None:
-        url = self.real_subscription_url.get().strip()
-        if not url:
-            messagebox.showerror("Missing URL", "Enter a subscription URL.")
-            return
-        node = self.real_node.get().strip()
-        controller = self.real_controller.get().strip()
-        controller_secret = self.real_secret.get()
-        group = self.real_group.get().strip() or None
-        presets = tuple(item.strip() for item in self.real_targets.get().split(",") if item.strip())
-        custom = tuple(item.strip() for item in self.real_custom.get().split(",") if item.strip())
-        open_browser = self.real_open_browser.get()
-        if open_browser and not node:
-            messagebox.showerror("Select one node", "Browser mode requires one exact node name so the route is not left on an arbitrary node.")
-            return
-        if not messagebox.askyesno(
-            "Real system-VPN test",
-            "This will switch the selected node in your local VPN controller and make real requests to the listed sites. Continue?",
-        ):
-            return
-        self._background(
-            "Switching real VPN node and testing conversation URLs…",
-            lambda: real_subscription_test(
-                url,
-                controller_url=controller,
-                controller_secret=controller_secret,
-                group=group,
-                nodes=(node,) if node else (),
-                presets=presets,
-                custom_targets=custom,
-                max_nodes=20,
-                open_browser=open_browser,
-            ),
-            self.realtest_output,
         )
 
     def _save_current(self) -> None:

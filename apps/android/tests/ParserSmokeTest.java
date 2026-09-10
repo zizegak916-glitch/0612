@@ -32,16 +32,22 @@ public final class ParserSmokeTest {
                 + "hy2://pass@hy.example.com:8443#hy\n"
                 + "tuic://id:pass@tuic.example.com:443#tuic\n");
         check(modern.nodes.size() == 3, "应识别 Trojan/Hysteria2/TUIC 链接");
+        SubscriptionParser.Report literalSubscription = SubscriptionParser.parse(
+                "vless://id@8.8.8.8:443#public\n"
+                + "vless://id@192.168.1.8:443#private\n");
+        SubscriptionResolver.Report literalResolution = SubscriptionResolver.resolve(literalSubscription.nodes);
+        check(literalResolution.ips.size() == 1 && literalResolution.ips.contains("8.8.8.8"),
+                "订阅调查只能接收原文直接暴露的公网 IP");
+        check(literalResolution.privateAddresses == 1, "订阅中的私网 IP 字面量必须拦截");
+        check(literalResolution.dnsObservations.isEmpty(), "IP 字面量节点不应产生 DNS 观察结果");
         IpResult us = new IpResult("8.8.8.8"); us.countryCode = "US"; us.riskEvaluated = true;
-        String usPolicy = AiPolicyEvaluator.evaluate(us);
-        check(usPolicy.contains("ChatGPT/OpenAI API：官方地区列表支持"), "美国出口应匹配 OpenAI 官方地区支持");
+        String usPolicy = AiEvidenceEvaluator.evaluate(us);
+        check(usPolicy.contains("技术可用性：未测试"), "IP 情报不应冒充 AI 路由实测");
         IpResult hk = new IpResult("1.1.1.1"); hk.countryCode = "HK"; hk.datacenter = true; hk.riskEvaluated = true;
-        String hkPolicy = AiPolicyEvaluator.evaluate(hk);
-        check(hkPolicy.contains("ChatGPT/OpenAI API：官方支持列表未包含"), "香港出口不应误报 ChatGPT 官方支持");
-        check(hkPolicy.contains("Gemini 网页：官方地区列表支持"), "香港出口应匹配 Gemini 网页支持");
-        check(hkPolicy.contains("机房"), "机房风险应进入 AI 风控推断");
-        IpResult cn = new IpResult("9.9.9.9"); cn.countryCode = "CN";
-        check(AiPolicyEvaluator.evaluate(cn).contains("个人版不支持"), "中国大陆 Gemini 应标注 Workspace 例外");
+        String hkPolicy = AiEvidenceEvaluator.evaluate(hk);
+        check(hkPolicy.contains("无法判断 GPT 可用或不可用"), "香港 IP 不应按国家代码误判 GPT");
+        check(!hkPolicy.contains("高概率不可用"), "不得保留旧版香港误判");
+        check(hkPolicy.contains("机房"), "机房风险应作为独立证据显示");
         String original = "https://example.com/api/fsl64/path?token=a%2Fb&x=1&x=2";
         String alternate = SubscriptionDownloader.alternateFormatUrl(original);
         check("https://example.com/api/fslyaml/path?token=a%2Fb&x=1&x=2".equals(alternate), "fsl 格式切换必须保留原查询串");

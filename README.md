@@ -1,40 +1,89 @@
-# IPBatchInspector 6 · Android system-VPN alpha
+# IPBatchInspector 6.0.0-alpha.2 · 纯调查版
 
-IPBatchInspector 是一套证据优先、跨平台的 IP 批量情报与订阅检查工具。一个仓库同时提供 Android、iOS、Windows、Linux、终端 CLI、Bash/PowerShell 脚本和 Tampermonkey/油猴版。6.0-alpha 首先把 Android 的“真实测试”升级为应用自身的系统 VPN；其他平台仍保留 5.x 的外部 Mihomo 控制器实现，不能把两者混称为同一能力。
+IPBatchInspector 是一套证据优先的 IP 批量情报、单 IP 深度调查、当前出口观测和只读订阅解析工具。仓库同时提供 Android、iOS、Windows、Linux、终端 CLI、Bash/PowerShell 脚本和 Tampermonkey/油猴版。
 
-> 默认订阅体检仍然只解析、做系统 DNS 并查询节点 IP 情报，绝不连接节点端口。只有用户主动进入 Android“真实测试”、勾选影响确认并通过系统 VPN 授权后，内嵌 sing-box/libbox 才会读取节点凭据、建立临时全设备 TUN 并逐节点访问指定网址。普通模式和真实模式是两条代码路径。
+> 6.0.0-alpha.2 已删除上一测试版中的 VPN、libbox、Mihomo 控制器、节点切换和“订阅真实测试”。本项目不会连接订阅节点、不会建立隧道、不会改变设备路由，也不能用来绕过网络限制。alpha.1 的 VPN 实验版已撤回，不应继续安装或分发。
 
-## 平台与入口
+## 能做什么
 
-| 平台 | 入口 | 当前实现 |
+- 批量调查 IPv4、IPv6、CIDR 和混合文本中的公网 IP；拒绝把私网、保留、CGNAT、文档地址发给第三方情报源。
+- 直接识别“本应用进程当前默认路由”看到的出口 IPv4/IPv6，并保留多个回显源的分歧。
+- 对一个公网 IP 做详细调查：多源地理/ASN/机构、RDAP 当前登记、RIPEstat 路由与 WHOIS、滥用联系人、PTR、Shodan InternetDB、GreyNoise，以及显式端口上的实时 TLS 证书观察。
+- 下载并解析订阅文本，识别常见 Clash/Mihomo YAML、Base64、代理 URI、链式引用和远程 provider；保存订阅 URL 时使用平台安全存储。
+- 用当前系统路由匿名访问多个 AI 公共入口，记录时间、HTTP 状态、跳转、拒绝/挑战和网络错误；不登录、不发消息、不输出“支持/不支持”结论。
+- Android 通过通知可见的前台服务继续用户主动发起的扫描；Windows/Linux 可显式安装用户级定时监控。
+
+## 不能做什么
+
+- 不实现代理协议，不连接节点端口，不做握手、测速、解锁测试、流媒体测试或出口验证。
+- 不包含 Android `VpnService`、iOS Network Extension、TUN、系统代理修改、root、系统 UID 或特权应用能力。
+- 不可能从普通订阅文本看见中转服务器、链式落地、域名后动态选择的最终出口或服务端 NAT 出口。
+- 不能凭 IP 的国家/地区、ASN、机房或代理标签判断 ChatGPT、Claude、Gemini 等是否可用。
+- 不能保证第三方数据库绝对正确或实时，也不能声称收集了“互联网上所有信息”。报告能保证的是：明确记录查询源、查询时间、返回字段、冲突、错误和已知边界。
+
+## 订阅到底能调查到什么
+
+解析协议与实际连接协议是两件不同的事。本项目只解析节点元数据，且只把 `server` 字段中直接写出的公网 IP 送去 IP 情报查询。
+
+| 订阅内容 | 分类 | 是否做 IP 情报 | 真实含义 |
+| --- | --- | ---: | --- |
+| `server: 8.8.8.8` 一类公网 IP 字面量 | 原文直露 IP | 是 | 调查的是订阅原文写出的地址；仍不证明它是最终出口 |
+| `server: edge.example.com` | 仅域名节点 | 否 | 系统 DNS 的 A/AAAA 仅列为“DNS 入口观察”，绝不冒充节点 IP 或出口 IP |
+| `server: 192.168.1.2`、环回、CGNAT、保留地址 | 非公网字面量 | 否 | 本地拦截，不外发给公共情报源 |
+| `dialer-proxy`、`detour`、relay/链式代理 | 链式引用 | 仅调查其中直接暴露的公网 IP | 中转顺序和最终落地出口不能由静态文本证明 |
+| 远程 `proxy-providers` | 额外订阅文档 | 下载后执行相同解析与安全校验 | 仍然只调查 provider 文本中直露的公网 IP |
+| 加密/私有格式、脚本生成配置、服务端动态路由 | 不透明输入 | 否 | 无法安全解析时明确报告不支持，不猜测结果 |
+
+因此，一份有 100 个域名节点的订阅可以得到 100 个节点元数据和若干 DNS 观察，但“可证明的真实流量出口”仍是 0。若订阅原文没有直接暴露公网 IP，应用会明确显示“没有可调查 IP”，而不是调查 CDN/DNS 地址后伪装成节点结果。
+
+## AI 信息如何判断
+
+AI 结果拆成互不替代的四类证据：
+
+| 证据 | 本项目是否获取 | 可以说明 | 不能说明 |
+| --- | ---: | --- | --- |
+| 当前路由匿名 HTTP 观察 | 是 | 此设备/进程此刻是否收到入口响应、跳转、鉴权响应、挑战或网络错误 | 登录后对话、账号状态、具体模型、订阅权益和长期可用性 |
+| IP 地理/ASN/风险情报 | 是 | 数据源如何描述该 IP | 某 AI 服务一定允许或拒绝该 IP |
+| 服务商官方政策页面 | 仅链接并标注核对日期 | 页面声明的产品范围与地区政策 | 另一个产品的政策、网页实际可达性或个人账号结果 |
+| 登录后的真实对话 | 否 | 只有用户在自己的浏览器/应用中才能验证 | 本项目不读取 Cookie、不登录、不发送提示词 |
+
+特别说明：香港 IP 不会因为 `country_code=HK` 被判为“GPT 不支持”。截至 2026-09-09 核对的 [OpenAI API 支持国家与地区页面](https://developers.openai.com/api/docs/supported-countries)只描述 API 服务政策，不能拿来替代 ChatGPT 网页实测，更不能覆盖用户在香港实际可用的事实。代码因此不再维护国家白名单/黑名单，也不把 403 自动解释为地区封锁。
+
+AI 入口状态使用中性事实名称，例如：`已收到入口响应`、`已收到跳转响应`、`已收到鉴权响应`、`观察到拒绝/挑战`、`传输失败`。只有响应正文明确出现地区不可用语义时，才记录“本次响应观察到地区提示”，仍不升级为永久国家结论。
+
+## 单 IP 详细调查
+
+`detail` 一次严格只接收一个公网 IP，并行执行以下调查：
+
+- 标准五源：ipapi.is、proxycheck.io、GeoJS、RDAP、RIPEstat；Ping0 仅在提供 `PING0_KEY` 时启用。
+- RDAP：地址范围、句柄、名称、状态、事件、父级句柄、公开登记实体/角色/联系人。
+- RIPEstat：覆盖前缀、起源 ASN、WHOIS/IRR、滥用联系人、RIS 可见性和返回时间。
+- Shodan InternetDB：被动观察到的端口、主机名、CPE、CVE 和标签；不是主动端口扫描。
+- GreyNoise Community：噪声/扫描/RIOT 分类与时间；无记录不等于安全。
+- PTR/rDNS：当前反向解析结果。
+- TLS：默认只连接目标 `IP:443`，记录叶证书主题、签发者、SAN、序列号、指纹、有效期、TLS 版本和密码套件。共享托管在无正确 SNI 时可能返回默认站点证书。
+- 国内辅助源：全球地理源成功不足两个时请求 CIP.cc HTTPS 页面；Android 详细模式在多个被动源失败时还会尝试百度智能云 IP 地理接口。两者都是低信任辅助源，不是上述数据库的镜像，不覆盖权威登记/BGP 证据，也不能单独把置信度提高到 high。响应未回显目标 IP 时拒绝采信。
+
+可选的 `SHODAN_KEY`、`GREYNOISE_KEY`、`VIRUSTOTAL_KEY` 会增加对应授权数据；密钥不会进入报告。详细调查不是完整互联网搜索，也不做端口范围扫描；被动端口/CVE、位置、风险和当前拥有者都可能存在滞后或归属语义差异。
+
+## 平台与后台能力
+
+| 平台 | 入口 | 后台事实 |
 | --- | --- | --- |
-| Android 7+ | `apps/android` | 原生 Java；正式 `VpnService`、内嵌 libbox、后台前台服务、详细调查、当前出口、订阅只解析及真实节点测试 |
-| iOS 16+ | `apps/ios` | 原生 SwiftUI；短时后台、详细调查、订阅只解析及本机控制器真实测试 |
-| Windows 10/11 | `ipbatch-gui` | Python/Tk 原生桌面窗口；详细/真实模式；可由 CI 打包为单文件 EXE |
-| Linux | `ipbatch-gui` | Python/Tk 桌面窗口；详细/真实模式；可由 CI 打包为可执行文件 |
-| Terminal | `ipbatch` | 跨平台 CLI，支持表格、JSON、CSV |
-| Script | `scripts/ipbatch.sh` / `scripts/ipbatch.ps1` | 无需先安装包，从源码直接运行 CLI |
-| Tampermonkey | `userscript/IPBatchInspector.user.js` | 详细被动调查及本机控制器真实测试；不具备系统后台或实时 TLS 证书读取能力 |
+| Android 7+ | `apps/android` | Java 原生应用；扫描、AI 入口观察和详细调查使用 `dataSync` 前台服务，必须显示通知。无 VPN/代理权限 |
+| iOS 16+ | `apps/ios` | SwiftUI；只能请求系统允许的有限后台时间，不能无限常驻 |
+| Windows 10/11 | `ipbatch-gui` / `ipbatch` | Tk 桌面与 CLI；可由用户注册登录计划任务运行 monitor |
+| Linux | `ipbatch-gui` / `ipbatch` | Tk 桌面与 CLI；可由用户安装 systemd 用户服务运行 monitor |
+| Bash/PowerShell | `scripts/ipbatch.sh` / `scripts/ipbatch.ps1` | 调用同一 Python 核心 |
+| Tampermonkey | `userscript/IPBatchInspector.user.js` | 依赖标签页与扩展生命周期，不是系统后台服务；浏览器也无法直接读取目标 IP 的实时 TLS 握手证书 |
 
-## 正式下载与安装
+“系统级工具”在这里仅指使用操作系统提供的前台服务、凭据库、Keychain、systemd 用户服务或计划任务集成；它不是 Android/iOS 特权系统应用。Android 申请的权限只有网络、网络状态、前台数据同步、通知和唤醒锁。拒绝通知权限会影响后台任务的可见性/启动条件，不会凭空赋予或移除 VPN 能力，因为项目根本不包含 VPN 服务。
 
-进入 [GitHub Releases](https://github.com/zizegak916-glitch/0612/releases/latest) 下载，并用同一页面的 `SHA256SUMS.txt` 校验。文件名会明确区分正式签名、开发签名、未签名和模拟器产物。
+## 安装和运行
 
-| 目标 | 下载文件 | 安装方式 | 签名事实 |
-| --- | --- | --- | --- |
-| Windows x64 | `Windows-x64-Setup.exe` | 双击，按安装向导完成；也有 portable EXE | 可直接安装；未配置 Authenticode，SmartScreen 可能提示未知发布者 |
-| Debian/Ubuntu x64 | `linux-x86_64.deb` | `sudo apt install ./IPBatchInspector-*.deb` | GitHub Actions 原生构建；DEB 当前未做发行版仓库签名 |
-| 通用 Linux x64 | `linux-x86_64.tar.gz` | 解压后运行 `ipbatch-gui` 或 `ipbatch-cli` | 免安装包 |
-| Android 7+ | `android-release.apk` 或 `android-debug.apk` | 允许浏览器/文件管理器安装未知应用后侧载；真实测试首次启动会出现 Android VPN 授权页 | `release` 仅在 GitHub Secrets 配置私有发布密钥时出现；`debug` 可安装但不是正式升级签名 |
-| iOS 模拟器 | `iOS-Simulator.zip` | 拖入 Xcode Simulator | 不是 iPhone IPA；真机必须由 Apple 证书和描述文件签名 |
-| Python/终端 | `.whl` | `python -m pip install ./ipbatch_inspector-*.whl` | 平台无关 Python 包 |
-| 油猴 | `.user.js` | [直接打开主分支脚本](https://raw.githubusercontent.com/zizegak916-glitch/0612/main/userscript/IPBatchInspector.user.js)，在 Tampermonkey 中审查权限并安装 | 源码即安装内容，可自动检查更新 |
+正式构建由 [GitHub Actions](https://github.com/zizegak916-glitch/0612/actions) 产生；已发布版本见 [GitHub Releases](https://github.com/zizegak916-glitch/0612/releases)。安装前请核对版本名和 `SHA256SUMS.txt`。开发签名 APK 可侧载测试，但不是稳定发布签名；iOS 模拟器包也不是可直接安装到 iPhone 的 IPA。
 
-油猴版需要 `@connect *`，原因是订阅域名由用户输入，无法提前穷举；脚本不会自动扫描当前网页，只有打开面板并点击操作后才发请求。它支持常见 Clash/Stash/Sing-box/Surge/Loon 导入包装链接、通用 Base64、Clash YAML 及主流节点 URI；“支持”指提取节点主机与端口元数据，不表示实现协议握手。它默认拒绝字面私网/本机地址并通过 Cloudflare DoH 检查公共域名的 A/AAAA 记录；现代 Tampermonkey 还会手动处理重定向并逐跳审计，旧实现若无视手动跳转选项则会丢弃跨站最终响应。
-
-## 快速开始
-
-要求 Python 3.10+。扫描、解析和桌面 UI 仅使用标准库；若要在 Windows/Linux 保存订阅链接，安装 `.[secure-store]`，链接将交给系统凭据库而不是写入项目文件。
+Python 3.10+：
 
 ```bash
 git clone https://github.com/zizegak916-glitch/0612.git
@@ -46,136 +95,56 @@ ipbatch exit --json
 ipbatch scan 1.1.1.1 8.8.8.8
 ipbatch detail 1.1.1.1
 ipbatch subscription 'https://example.com/subscription' --list-nodes
-ipbatch ai
+ipbatch ai --json
 ipbatch-gui
 ```
 
-Windows PowerShell：
+Windows PowerShell 使用 `py` 和 `.\.venv\Scripts\Activate.ps1`。也可不安装直接运行 `./scripts/ipbatch.sh` 或 `.\scripts\ipbatch.ps1`。
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-py -m pip install -e .
-ipbatch exit --json
-ipbatch-gui
-```
-
-不安装也能运行：
-
-```bash
-./scripts/ipbatch.sh scan 1.1.1.1
-```
-
-```powershell
-.\scripts\ipbatch.ps1 scan 1.1.1.1
-```
-
-## CLI
+## CLI 命令
 
 ```text
 ipbatch exit [--json]
-ipbatch scan <IP/CIDR/文本...> [--json|--csv FILE] [--workers N] [--fresh] [--cache-ttl 秒]
-ipbatch detail <一个公网IP> [--tls-port 443] [--fresh] [--no-domestic-fallback]
-ipbatch subscription <HTTPS_URL> [--allow-private-subscription] [--list-nodes] [--json] [--fresh]
+ipbatch scan <IP/CIDR/文本...> [--json] [--csv FILE] [--workers N] [--fresh]
+ipbatch detail <一个公网IP> [--tls-port PORT] [--fresh] [--no-domestic-fallback]
+ipbatch subscription [URL|--url-file FILE|--saved NAME] [--list-nodes] [--json] [--fresh]
 ipbatch ai [--json]
-ipbatch realtest <HTTPS订阅> [--controller http://127.0.0.1:9090] [--group 策略组] [--node 精确节点名] [--targets all] [--custom-url HTTPS网址]
 ipbatch formats
+ipbatch saved add|list|delete ...
 ipbatch monitor --config monitor.example.json [--once]
 ```
 
-- `scan` 支持 IPv4、IPv6、CIDR（每个 CIDR 最多展开 4096 个地址）及包含 IP 的混合文本；单次最多 500 个唯一公网 IP。
-- `subscription` 支持 Clash/Mihomo YAML、Base64 通用订阅、SS、SSR、VMess、VLESS、Trojan、Hysteria/Hysteria2/Hy2、TUIC、SOCKS4/5、HTTP(S) 代理 URI、`dialer-proxy` 链式引用与远程 `proxy-providers`。
-- `sn://subscription` 会提取其中显式提供的 HTTP(S) 订阅地址；`fsl64`/`fslyaml` 首选格式失败时自动尝试另一格式，URL 查询串逐字保留，不重写 Token。
-- 公网订阅强制 HTTPS。本机/局域网 HTTP 必须显式传入 `--allow-private-subscription`；解析出的私网、保留、CGNAT 或文档地址不会送到公网情报源。
-- 原始订阅内容只在当前进程内存在。CLI 默认不打印原文，保存节点清单时也不输出密码、UUID、Token 或用户信息。
-- `--fresh` 跳过缓存读取并用本次响应刷新缓存；`--cache-ttl` 可覆盖所有数据源 TTL。缓存保存公网 IP 情报，并对失败做 60 秒短期退避，不保存订阅 URL、订阅原文、节点凭据或 API Key。
+- `scan` 每个 CIDR 最多展开 4096 个地址，单次最多接受 500 个唯一公网 IP。
+- 公网订阅默认强制 HTTPS；本机订阅管理器的 HTTP URL 必须显式使用 `--allow-private-subscription`。该选项只允许下载订阅，不会允许私网节点 IP 外发调查。
+- `saved add` 把订阅 URL 保存到操作系统凭据库；原始订阅正文、节点 UUID/密码、Token 不写入扫描报告或 IP 情报缓存。
+- `--fresh` 跳过本地证据缓存，但不能强迫上游数据库更新其底层数据。
 
-### 单 IP 详细调查
-
-`detail` 严格只接受一个公网 IP。它并发检索标准五源、完整 RDAP 登记实体、RIPEstat 网络/WHOIS/abuse/可见性、Shodan InternetDB、GreyNoise Community、PTR，并对明确列出的 TLS 端口（默认仅 443）抓取当前证书、指纹、主题、签发者、SAN、有效期、TLS 版本和密码套件。配置 `SHODAN_KEY`、`GREYNOISE_KEY`、`VIRUSTOTAL_KEY` 后会增加对应的已授权结果；密钥不写入报告。
-
-这不是端口扫描：默认只有一个主动目标连接 `IP:443`。共享托管可能按 SNI 返回不同证书，因此程序只额外尝试“当前确实正向解析回该 IP”的 PTR/Shodan 主机名。第三方被动端口/CVE、风险或拥有者信息可能滞后；“所有公网信息”不存在可证明完备的集合，所以报告逐项列出实际查询源、时间、耗时、HTTP/网络失败和局限，绝不声称无遗漏。
-
-### 订阅真实测试
-
-Android 6.0-alpha 不需要另装 Clash/Mihomo，也不需要 External Controller：
-
-1. 载入订阅后进入“订阅真实测试”，可填写精确节点名；留空时最多转换并测试前 20 个受支持节点。
-2. 勾选影响确认，接受 Android 自带的 VPN 授权页。订阅在 TUN 建立前下载，节点域名只要有一个 DNS 答案属于私网/保留地址就拒绝该节点。
-3. 内嵌 libbox 按节点建立/重载临时 sing-box 配置，经 `VpnService.Builder.establish()` 获得 TUN，并用 `VpnService.protect(fd)` 保护核心出站套接字避免回环。
-4. 每个节点重新检测应用出口，并访问 ChatGPT、Claude、Gemini、AI Studio、Grok、Perplexity、Copilot 的真实对话网址及用户自定义公网 HTTPS URL；记录最终 URL、HTTP 分类、时延及当前 TLS 证书摘要。
-5. 匿名探针不发送登录 Cookie、账号、API Key、提示词或消息。登录跳转记为“已到达但需要认证”，只有响应明确出现国家/地区不可用语义时才标记 `geo_blocked`；403 会区分可能的 WAF/挑战，不能自动等同地区封锁。
-6. 批量探测完成或失败后关闭 libbox、TUN 和前台服务。浏览器验证只允许一个精确节点，会在该系统 VPN 下打开真实对话页，并保持到用户点击通知栏“停止 VPN”。
-
-当前内嵌转换覆盖 sing-box JSON、常见 Clash/Mihomo YAML，以及 VLESS、VMess、SS（不含 plugin）、Trojan、Hysteria/Hysteria2、TUIC、SOCKS、HTTP URI；Clash `dialer-proxy` 和 sing-box `detour` 会保留为链。SSR 已被 sing-box 1.14 移除，因此只能普通解析，真实模式明确拒绝。私有加密订阅、复杂 YAML 锚点或尚未映射的插件会给出逐节点警告，不会伪称“全部协议都已连接验证”。
-
-Windows、Linux、CLI、iOS 与油猴目前仍使用 5.x 的本机 Mihomo 控制器方式；它们不是本轮 Android 内嵌 VPN。系统 VPN 会在测试期间短时影响设备其他流量，且 Android 同时只允许一个活跃 VPN。
-
-### Windows/Linux 后台运行
-
-`monitor` 可按 JSON 配置持续执行出口、AI、IP、单 IP 详细调查、普通订阅检查，或用户明确配置的系统 VPN 真实测试；它原子更新 `latest.json`，保留最近历史并标记结果是否变化。配置文件不接受原始订阅 URL，只接受系统凭据库中的保存名称；Mihomo Secret 只能来自 `MIHOMO_SECRET` 或权限受控的 `controller_secret_file`，不会写入报告。后台真实测试禁止打开浏览器，并在每轮后恢复原节点。
-
-- Linux：`scripts/install_service_linux.sh` 安装当前用户的 systemd 服务；无需 root，也不会取得额外网络权限。
-- Windows：`scripts/install_service_windows.ps1` 注册当前用户登录后启动的计划任务。
-- Linux DEB 同时安装 `ipbatch-monitor.service` 模板但不会擅自启用；先创建不含明文 URL 的配置，再由用户执行 `systemctl --user enable --now ipbatch-monitor`。
-- Android：继续使用通知可见的前台服务。
-- iOS：只申请系统允许的有限后台时间，不支持无限常驻。
-
-后台真实测试配置示例（先执行 `ipbatch saved add primary --url-file subscription.txt`；Secret 放环境或权限为 600 的独立文件）：
+Windows/Linux 的后台监控配置只接受无敏感信息的 JSON。订阅监控必须引用已经保存的名称：
 
 ```json
 {
-  "mode": "realtest",
+  "mode": "subscription",
   "saved_subscription": "primary",
-  "controller": "http://127.0.0.1:9090",
-  "controller_secret_file": "/absolute/private/path/mihomo-secret.txt",
-  "group": "节点选择",
-  "nodes": ["美国住宅-01"],
-  "targets": ["chatgpt", "claude", "gemini", "aistudio"],
-  "custom_urls": ["https://example.com/account"],
   "interval_seconds": 1800,
-  "max_nodes": 5,
+  "history_limit": 10,
   "output_directory": "monitor-results"
 }
 ```
 
-配置中的 `nodes` 是精确显示名；留空会按控制器策略组顺序测试匹配节点，受 `max_nodes` 限制。后台模式固定 `open_browser=false`。
+`monitor` 还支持 `exit`、`ai`、`scan`、`detail`；不再接受 `realtest`。每轮原子更新 `latest.json` 并保留有限历史。Linux/Windows 服务安装方式见 [`docs/BUILDING.md`](docs/BUILDING.md)。
 
-## 情报与真实性
+## 数据真实性与更新
 
-默认源为 ipapi.is、proxycheck.io、GeoJS、RDAP 和 RIPEstat；可通过 `--sources` 选择。当至少两个全球地理源被请求但成功不足两个时，自动调用 CIP.cc HTTPS 境内辅助页。它不是任何核心数据库的官方镜像，标记为 `fallback-unverified`，不参与 high 置信度门槛，也不会覆盖已有权威登记/BGP 证据。每条结果记录查询目标、来源、UTC 时间、耗时、缓存命中与年龄、字段和错误。风险分始终保留来源，不把不同供应商的模型平均成伪精确总分。
+每条源证据记录来源、UTC 查询时间、耗时、成功/失败、缓存命中与字段。合并国家/ASN/机构只是方便视图；原始来源冲突保留在 `conflicts` 中。风险分按供应商分别保留，不平均成虚假的统一分数。缺失的代理/VPN/Tor/机房字段是 `unknown`，不是 `false`。
 
-国家、国家代码、ASN、地区、城市和组织按成功来源投票，`consensus` 保留获胜值、同意数和来源；`conflicts` 保存所有不一致值。代理/VPN/Tor/机房/滥用字段不再用“缺失即否”：`signals` 明确区分多源确认、单源报告、来源矛盾、明确未报和未知。`confidence` 只给可解释的 high/medium/low/none 等级，不给没有校准依据的综合小数分。
-
-默认缓存按字段变化速度区分：RIPEstat 15 分钟，proxycheck/Ping0 30 分钟，ipapi.is 6 小时，GeoJS 24 小时，RDAP 7 天。RDAP.org 路径约每 1.05 秒最多启动一次请求，RIPEstat 全局最多 8 路并发；这是为了遵守公开服务限制并降低批量 429，而不是速度缺陷。详见 [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md)。
-
-工具能够保证的是“请求了谁、何时请求、得到了哪些字段、哪些请求失败”；不能保证第三方数据库绝对正确，也不能保证某个账号、模型或网站一定接受该 IP。城市定位和风险标签通常比 RDAP、BGP/RPKI 更易过期。
-
-AI 检测分三类：
-
-1. 当前设备直测公开网页/API 入口，只使用系统默认网络，不发送账号、Cookie、API Key 或提示词；预期的 400/401 鉴权错误表示入口有响应，不表示账号可用。
-2. 对订阅节点只根据国家代码、官方地区快照和 IP 风险字段做推断，明确标注“未连接节点、非解锁实测”。
-3. 用户显式启动的 Android 订阅真实测试，通过本应用建立的系统 VPN 逐节点访问真实对话 URL；它比地区推断更直接，但未登录匿名响应仍不能保证账号、付费权限、具体模型或发消息成功。
-
-## 系统级/后台边界
-
-- Android 使用正式 `VpnService` 和前台服务。扫描、详细调查与真实测试离开页面后可继续；它具有用户授权的 VPN 数据平面，但仍不是 root、系统 UID 或 `/system/priv-app`。
-- Windows/Linux 桌面窗口关闭后，当前交互任务会停止；已由用户显式安装的 systemd 用户服务或 Windows 计划任务独立运行。安装包不会在未告知的情况下自动启用后台监控。
-- iOS 不允许普通第三方应用无限后台运行。应用在前台完成检测；系统只可能为短时任务提供有限后台时间。项目不会声称绕过 iOS 限制。
-- 油猴脚本依赖浏览器标签页和扩展生命周期，不能替代系统服务；需要可靠后台监控时使用 Android 前台服务或 Windows/Linux 原生监控入口。
-- 普通探针使用当前进程默认路由；Android 真实测试携带 libbox 代理协议实现并建立临时系统 VPN。其他平台的 5.x 真实测试仍依赖外部 Mihomo。
+默认客户端缓存 TTL 是项目的请求策略，不等于数据源更新周期：RIPEstat 15 分钟、proxycheck/Ping0 30 分钟、ipapi.is 6 小时、GeoJS 24 小时、RDAP 7 天。查询失败仅短暂退避 60 秒。具体来源、配额和边界见 [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md)。
 
 ## 构建
 
-- Python/CLI：`python -m build`
-- Windows/Linux GUI：见 [`docs/BUILDING.md`](docs/BUILDING.md)
-- Android：`cd apps/android && ./build.sh`（首次会下载固定版本 Go、NDK、Android SDK、sing-box 源码并构建四 ABI libbox，耗时和体积明显高于 5.x）
-- iOS：用 Xcode 打开 `apps/ios/IPBatchInspector.xcodeproj`，选择模拟器或签名设备构建。
-- GitHub Actions：每次提交执行 Python、Android、Windows、Linux、iOS 和油猴静态/构建检查；新增 `.github/releases/v*.json` 发布清单后自动创建对应标签和 GitHub Release。
-- 每次主分支 CI 同时提供 Android APK、Windows/Linux CLI 与桌面程序、iOS 模拟器包作为 Actions artifacts；iOS 真机安装仍需用户自己的 Apple 签名。
+- Python 包：`python -m build`
+- Android：`cd apps/android && ./build.sh`；首次下载固定校验和的 Android 35 platform/build-tools、ECJ 与 JSON jar，不再下载 Go、NDK 或 libbox
+- iOS：用 Xcode 16+ 打开 `apps/ios/IPBatchInspector.xcodeproj`
+- 油猴静态检查：`node --check userscript/IPBatchInspector.user.js`
+- 完整安装包说明：[`docs/BUILDING.md`](docs/BUILDING.md)
 
-更完整的架构、安全边界和平台差异见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`SECURITY.md`](SECURITY.md) 与 [`PRIVACY.md`](PRIVACY.md)。
-
-## 开源许可
-
-GPLv3 或更高版本，并保留上游 `LICENSE` 末尾的名称/关联限制。Android 内嵌 sing-box/libbox，因此不再沿用旧版 MIT 许可；来源与固定提交见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。第三方数据源各自的速率、授权和服务条款仍然适用。
+架构和安全边界见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`SECURITY.md`](SECURITY.md) 与 [`PRIVACY.md`](PRIVACY.md)。项目采用 MIT License；第三方数据服务的条款、配额和授权仍分别适用。

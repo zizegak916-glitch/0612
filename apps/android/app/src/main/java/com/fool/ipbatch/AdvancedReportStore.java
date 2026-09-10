@@ -3,7 +3,7 @@ package com.fool.ipbatch;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-/** Persists the latest rendered report only; subscription URLs, contents and controller secrets are excluded. */
+/** Persists only the latest rendered single-IP investigation report. */
 public final class AdvancedReportStore {
     private static final String PREFS = "advanced_report_v1";
     private AdvancedReportStore() { }
